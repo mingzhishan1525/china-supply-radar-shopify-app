@@ -1,0 +1,148 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Shop {
+  id                   String    @id @default(cuid())
+  shopDomain           String    @unique
+  accessTokenEncrypted String?
+  scopes               String
+  email                String?
+  timezone             String?
+  installedAt          DateTime  @default(now())
+  uninstalledAt        DateTime?
+  events               AppEvent[]
+}
+
+model ShopSession {
+  id                   String    @id @default(cuid())
+  shop                 String    @unique
+  accessTokenEncrypted String
+  scope                String
+  isInstalled          Boolean   @default(true)
+  installedAt          DateTime  @default(now())
+  uninstalledAt        DateTime?
+  updatedAt            DateTime  @updatedAt
+}
+
+model VariantSnapshot {
+  id                String   @id @default(cuid())
+  shop              String
+  shopifyProductId  String
+  shopifyVariantId  String
+  sku               String?
+  title             String
+  productTitle      String
+  price             String?
+  inventoryQuantity Int
+  shopifyUpdatedAt  DateTime?
+  syncedAt          DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([shop, shopifyVariantId])
+  @@index([shop])
+}
+
+model Supplier {
+  id           String   @id @default(cuid())
+  shop         String
+  name         String
+  country      String   @default("China")
+  province     String?
+  city         String?
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  wechat       String?
+  whatsapp     String?
+  leadTimeDays Int      @default(14)
+  moq          Int?
+  notes        String?
+  riskLevel    String   @default("unknown")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([shop, isActive])
+}
+
+model SupplierMapping {
+  id                  String   @id @default(cuid())
+  shop                String
+  variantSnapshotId   String
+  supplierId          String
+  supplierSku         String?
+  factoryLeadTimeDays Int
+  reorderBufferDays   Int      @default(7)
+  moq                 Int?
+  notes               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([shop, variantSnapshotId])
+  @@index([shop, supplierId])
+}
+
+model SalesVelocity {
+  id                  String   @id @default(cuid())
+  shop                String
+  shopifyVariantId    String
+  variantSnapshotId   String
+  unitsSold           Int
+  windowDays          Int      @default(30)
+  estimatedDailySales Float
+  calculatedFrom      DateTime
+  calculatedTo        DateTime
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([shop, shopifyVariantId, windowDays])
+  @@index([shop])
+  @@index([shop, variantSnapshotId])
+}
+
+model HolidayWindow {
+  id               String   @id @default(cuid())
+  name             String
+  country          String   @default("China")
+  startsOn         DateTime
+  endsOn           DateTime
+  riskLeadTimeDays Int      @default(45)
+  severity         String
+  notes            String?
+}
+
+model Recommendation {
+  id                  String   @id @default(cuid())
+  shop                String
+  variantSnapshotId   String
+  supplierId          String?
+  currentInventory    Int
+  estimatedDailySales Float?
+  inventoryCoverDays  Int?
+  stockoutDate        DateTime?
+  latestReorderDate   DateTime?
+  riskLevel           String
+  reason              String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([shop, variantSnapshotId])
+  @@index([shop, riskLevel])
+}
+
+model AppEvent {
+  id           String   @id @default(cuid())
+  shopId       String
+  shop         Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  eventName    String
+  entityType   String?
+  entityId     String?
+  metadataJson String?
+  createdAt    DateTime @default(now())
+}

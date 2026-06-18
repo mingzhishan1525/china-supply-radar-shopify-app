@@ -1,0 +1,44 @@
+{
+  "name": "china-supply-radar-shopify-app-v1",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@10.9.8",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "node --test --experimental-strip-types src/domain/reorder.test.ts src/server/server.test.ts",
+    "server": "node --experimental-strip-types src/server/server.ts",
+    "start": "node --experimental-strip-types src/server/server.ts",
+    "typecheck": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "db:seed": "node --experimental-strip-types src/server/seed.ts",
+    "docker:build": "docker compose build",
+    "docker:shell": "docker compose run --rm app bash",
+    "docker:test": "docker compose run --rm app npm test",
+    "docker:typecheck": "docker compose run --rm app npm run typecheck",
+    "docker:build-app": "docker compose run --rm app npm run build",
+    "docker:prisma": "docker compose run --rm app npx prisma generate",
+    "docker:migrate": "docker compose run --rm app npx prisma migrate dev"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "@shopify/polaris": "^13.9.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "prisma": "6.19.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router": "^7.0.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0"
+  }
+}

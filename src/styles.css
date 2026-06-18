@@ -1,0 +1,16 @@
+body {
+  margin: 0;
+  background: #f6f6f7;
+}
+
+.queryPreview {
+  max-height: 360px;
+  overflow: auto;
+  border-radius: 8px;
+  background: #111827;
+  color: #f8fafc;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 16px;
+  white-space: pre-wrap;
+}
