@@ -4,8 +4,8 @@
 # values. See shopify.app.toml.example and docs/production-config-checklist.md.
 
 name = "China Supply Radar"
-client_id = ""
-application_url = "http://localhost:3001"
+client_id = "a99151fe4923be8e92663b8a7d0dba56"
+application_url = "https://app.chinasupplyradar.com"
 embedded = true
 
 [access_scopes]
@@ -13,7 +13,7 @@ scopes = "read_products,read_inventory,read_orders"
 
 [auth]
 redirect_urls = [
-  "http://localhost:3001/auth/callback"
+  "https://app.chinasupplyradar.com/auth/callback"
 ]
 
 [webhooks]
