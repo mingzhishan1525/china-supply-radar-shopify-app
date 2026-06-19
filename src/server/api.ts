@@ -250,6 +250,7 @@ async function requireInstalledShop(query: URLSearchParams, deps: ApiDeps) {
   const shop = query.get("shop");
 
   if (!shop) {
+    console.warn("[API auth] missing shop query parameter");
     throw new ApiError("missing_shop", "Missing shop query parameter", 400);
   }
 
@@ -257,17 +258,29 @@ async function requireInstalledShop(query: URLSearchParams, deps: ApiDeps) {
     const token = parseBearerToken(deps.authorizationHeader);
 
     if (!token || !verifyShopifySessionToken(token, shop, deps.config)) {
+      console.warn("[API auth] invalid Shopify session token", {
+        shop,
+        hasBearerToken: Boolean(token),
+      });
       throw new ApiError("invalid_session_token", "Invalid Shopify session token", 401);
     }
+  } else {
+    console.warn("[API auth] request without Shopify session token", {
+      shop,
+      hasAuthorizationHeader: Boolean(deps.authorizationHeader),
+      hasConfig: Boolean(deps.config),
+    });
   }
 
   const session = await deps.sessionStore.load(shop);
 
   if (!session) {
+    console.warn("[API auth] shop session was not found", { shop });
     throw new ApiError("shop_not_installed", "Shop is not installed", 401);
   }
 
   if (!session.isInstalled) {
+    console.warn("[API auth] shop session is uninstalled", { shop });
     throw new ApiError("shop_uninstalled", "Shop is not installed", 403);
   }
 

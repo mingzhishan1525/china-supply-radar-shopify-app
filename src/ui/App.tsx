@@ -262,6 +262,19 @@ export default function App() {
   const host = getHostFromUrl();
   const demoMode = getDemoModeFromUrl();
 
+  useEffect(() => {
+    if (demoMode) {
+      return;
+    }
+
+    console.info("[Shopify embedded context]", {
+      host,
+      shop,
+      hasShopifyGlobal: typeof window !== "undefined" && Boolean(window.shopify),
+      hasIdToken: typeof window !== "undefined" && Boolean(window.shopify?.idToken),
+    });
+  }, [demoMode, host, shop]);
+
   const loadSupplyChainData = async () => {
     if (!shop) {
       return;
@@ -1420,7 +1433,7 @@ async function fetchJson<TData = unknown>(url: string, init?: RequestInit): Prom
   const headers = new Headers(init?.headers);
   headers.set("Content-Type", "application/json");
 
-  const sessionToken = await getShopifySessionToken();
+  const sessionToken = await getShopifySessionToken(url);
 
   if (sessionToken) {
     headers.set("Authorization", `Bearer ${sessionToken}`);
@@ -1432,22 +1445,84 @@ async function fetchJson<TData = unknown>(url: string, init?: RequestInit): Prom
   });
 
   if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      console.warn("[Shopify API auth failure]", {
+        url,
+        status: response.status,
+        hasAuthorizationHeader: headers.has("Authorization"),
+        host: getHostFromUrl(),
+        shop: getShopFromUrl(),
+      });
+    }
+
     throw new Error(await readErrorMessage(response));
   }
 
   return response.json() as Promise<TData>;
 }
 
-async function getShopifySessionToken(): Promise<string | null> {
-  if (typeof window === "undefined" || !window.shopify?.idToken) {
+async function getShopifySessionToken(requestUrl: string): Promise<string | null> {
+  if (typeof window === "undefined" || getDemoModeFromUrl()) {
     return null;
   }
 
-  try {
-    return await window.shopify.idToken();
-  } catch {
+  const host = getHostFromUrl();
+  const shop = getShopFromUrl();
+
+  if (!host) {
+    console.warn("[Shopify session token] host parameter missing", { requestUrl, shop });
     return null;
   }
+
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const idToken = window.shopify?.idToken;
+
+    if (!idToken) {
+      console.info("[Shopify session token] idToken unavailable, waiting", {
+        requestUrl,
+        attempt,
+        host,
+        shop,
+        hasShopifyGlobal: Boolean(window.shopify),
+      });
+      await wait(150 * attempt);
+      continue;
+    }
+
+    try {
+      const token = await idToken();
+      console.info("[Shopify session token] retrieved", {
+        requestUrl,
+        host,
+        shop,
+        tokenLength: token.length,
+      });
+      return token;
+    } catch (error) {
+      console.warn("[Shopify session token] retrieval failed", {
+        requestUrl,
+        attempt,
+        host,
+        shop,
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+      await wait(150 * attempt);
+    }
+  }
+
+  console.warn("[Shopify session token] unavailable after retries", {
+    requestUrl,
+    host,
+    shop,
+    hasShopifyGlobal: Boolean(window.shopify),
+    hasIdToken: Boolean(window.shopify?.idToken),
+  });
+
+  return null;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
