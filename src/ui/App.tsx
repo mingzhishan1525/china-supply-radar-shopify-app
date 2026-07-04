@@ -11,7 +11,6 @@ import {
   InlineGrid,
   InlineStack,
   Layout,
-  Link,
   List,
   Page,
   Select,
@@ -22,6 +21,7 @@ import {
   Banner,
 } from "@shopify/polaris";
 import enTranslations from "@shopify/polaris/locales/en.json";
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   calculateReorderRecommendation,
@@ -32,7 +32,6 @@ import {
   sampleHolidays,
   sampleVariants,
 } from "../domain/sampleData";
-import { PRODUCTS_QUERY } from "../shopify/queries";
 
 const tabs = [
   { id: "overview", content: "Overview" },
@@ -47,6 +46,28 @@ const dayMs = 24 * 60 * 60 * 1000;
 const today = new Date("2026-06-12T00:00:00.000Z");
 const emptyStateImage =
   "https://cdn.shopify.com/s/files/1/0759/7459/3952/files/empty-state-supply-chain.png";
+const screenshotPreviews = [
+  {
+    title: "Dashboard",
+    caption: "See store-level inventory health in one decision view.",
+    src: "/screenshots/shopify-dashboard-overview.png",
+  },
+  {
+    title: "Inventory risk",
+    caption: "Spot SKUs moving toward stockout before they hurt revenue.",
+    src: "/screenshots/shopify-inventory-health.png",
+  },
+  {
+    title: "Reorder queue",
+    caption: "Know which products to reorder and when.",
+    src: "/screenshots/shopify-reorder-queue.png",
+  },
+  {
+    title: "Holiday impact",
+    caption: "Plan around China factory slowdowns and holiday closures.",
+    src: "/screenshots/shopify-china-holiday-impact.png",
+  },
+];
 
 const chinaHolidays = [
   {
@@ -164,6 +185,33 @@ type OrdersSyncResult = {
   calculatedTo: string;
 };
 
+type BillingState =
+  | { status: "unknown"; billing?: undefined; error?: undefined }
+  | { status: "loading"; billing?: undefined; error?: undefined }
+  | { status: "error"; billing?: undefined; error: string }
+  | { status: "ready"; billing: BillingStatus; error?: undefined };
+
+type BillingStatus = {
+  active: boolean;
+  plan: "FREE" | "PRO";
+  subscribed: boolean;
+  planName: string | null;
+  status: string | null;
+  subscriptionId: string | null;
+  cancelAtPeriodEnd: boolean;
+  currentPeriodEnd: string | null;
+};
+
+type BillingStatusPayload = {
+  shop: string;
+  billing: BillingStatus;
+};
+
+type BillingSubscribePayload = {
+  shop: string;
+  confirmationUrl: string;
+};
+
 type ReorderQueueItem = {
   sku: string | null;
   productTitle: string;
@@ -204,6 +252,17 @@ type UpcomingStockoutItem = {
   estimatedDailySales: number;
   inventoryCoverDays: number;
   riskLevel: string;
+};
+
+type BadgeTone = "attention" | "critical" | "info" | "success" | "warning";
+
+type SkuRiskCard = {
+  id: string;
+  productName: string;
+  stock: number;
+  coverageDays: string;
+  riskLevel: string;
+  tone: BadgeTone;
 };
 
 declare global {
@@ -256,7 +315,9 @@ export default function App() {
   const [salesVelocity, setSalesVelocity] = useState<SalesVelocity[]>([]);
   const [reorderQueue, setReorderQueue] = useState<ReorderQueueItem[]>([]);
   const [ordersSyncResult, setOrdersSyncResult] = useState<OrdersSyncResult | null>(null);
+  const [billingState, setBillingState] = useState<BillingState>({ status: "unknown" });
   const [isSyncingOrders, setIsSyncingOrders] = useState(false);
+  const [isStartingBilling, setIsStartingBilling] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const shop = getShopFromUrl();
   const host = getHostFromUrl();
@@ -361,13 +422,93 @@ export default function App() {
     };
   }, [shop]);
 
+  useEffect(() => {
+    if (!shop) {
+      return;
+    }
+
+    let isActive = true;
+    setBillingState({ status: "loading" });
+
+    fetchJson<BillingStatusPayload>(`/api/billing/status?shop=${encodeURIComponent(shop)}`)
+      .then((payload) => {
+        if (isActive) {
+          setBillingState({ status: "ready", billing: payload.billing });
+        }
+      })
+      .catch((error) => {
+        if (isActive) {
+          setBillingState({
+            status: "error",
+            error: error instanceof Error ? error.message : "Unable to load billing status",
+          });
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [shop]);
+
+  const startBilling = async () => {
+    if (!shop) {
+      return;
+    }
+
+    setIsStartingBilling(true);
+    try {
+      const payload = await fetchJson<BillingSubscribePayload>(
+        `/api/billing/create?shop=${encodeURIComponent(shop)}`,
+        { method: "POST" },
+      );
+      window.location.assign(payload.confirmationUrl);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : "Unable to start Shopify Billing");
+    } finally {
+      setIsStartingBilling(false);
+    }
+  };
+
   const productInsights = useMemo(
     () => buildProductInsights(productsState),
     [productsState],
   );
+  const currentPath = typeof window === "undefined" ? "/" : window.location.pathname;
+
+  if (currentPath === "/landing") {
+    return (
+      <AppProvider i18n={enTranslations}>
+        <LandingPage />
+      </AppProvider>
+    );
+  }
+
+  if (currentPath === "/onboarding") {
+    return (
+      <AppProvider i18n={enTranslations}>
+        <OnboardingPage />
+      </AppProvider>
+    );
+  }
+
+  if (currentPath === "/privacy-policy") {
+    return (
+      <AppProvider i18n={enTranslations}>
+        <PrivacyPolicyPage />
+      </AppProvider>
+    );
+  }
+
+  if (currentPath === "/terms-of-service") {
+    return (
+      <AppProvider i18n={enTranslations}>
+        <TermsOfServicePage />
+      </AppProvider>
+    );
+  }
 
   // Show loading if host is missing (not in embedded context)
-  if (!host && !demoMode) {
+  if (!host && !shop && !demoMode) {
     return (
       <AppProvider i18n={enTranslations}>
         <Page title="China Supply Radar">
@@ -420,6 +561,9 @@ export default function App() {
             demoMode={demoMode}
             dataError={dataError}
             onSyncOrders={syncOrders}
+            billingState={billingState}
+            isStartingBilling={isStartingBilling}
+            onStartBilling={startBilling}
           />
         ) : null}
         {selectedTab === 1 ? (
@@ -447,7 +591,13 @@ export default function App() {
           />
         ) : null}
         {selectedTab === 4 ? <HolidayCalendar /> : null}
-        {selectedTab === 5 ? <Settings /> : null}
+        {selectedTab === 5 ? (
+          <Settings
+            billingState={billingState}
+            isStartingBilling={isStartingBilling}
+            onStartBilling={startBilling}
+          />
+        ) : null}
       </Box>
     </Page>
   );
@@ -459,7 +609,281 @@ export default function App() {
   );
 }
 
-// Rest of the components remain unchanged
+function LandingPage() {
+  return (
+    <div className="landingPage">
+      <section className="landingHero">
+        <div className="landingShell landingHeroGrid">
+          <BlockStack gap="500">
+            <Badge tone="success">Shopify inventory risk prediction</Badge>
+            <BlockStack gap="300">
+              <h1>Prevent Stockouts Before They Happen</h1>
+              <p>
+                Predict inventory risks and reorder timing using real Shopify sales data and China supply chain signals.
+              </p>
+            </BlockStack>
+            <InlineStack gap="300">
+              <Button variant="primary" url="/onboarding">Start Free Trial</Button>
+              <Button url="/onboarding">Install App</Button>
+            </InlineStack>
+          </BlockStack>
+          <div className="heroPreview" aria-label="China Supply Radar product preview">
+            <img src="/screenshots/shopify-dashboard-overview.png" alt="China Supply Radar dashboard preview" />
+          </div>
+        </div>
+      </section>
+
+      <section className="landingBand">
+        <div className="landingShell">
+          <div className="valueGrid">
+            {[
+              "Predict inventory shortages before they happen",
+              "Avoid China holiday production delays",
+              "Know exactly when to reorder each SKU",
+            ].map((item) => (
+              <div className="valueCard" key={item}>
+                <span />
+                <strong>{item}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="landingSection">
+        <div className="landingShell">
+          <div className="sectionHeading">
+            <h2>How it works</h2>
+          </div>
+          <div className="stepsGrid">
+            {[
+              "Connect your Shopify store",
+              "We analyze sales + inventory data",
+              "Get reorder recommendations automatically",
+            ].map((step, index) => (
+              <div className="stepCard" key={step}>
+                <span>{index + 1}</span>
+                <h3>{step}</h3>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="landingSection previewSection">
+        <div className="landingShell">
+          <div className="sectionHeading">
+            <h2>Product preview</h2>
+          </div>
+          <div className="screenshotGrid">
+            {screenshotPreviews.map((preview) => (
+              <article className="screenshotCard" key={preview.title}>
+                <img src={preview.src} alt={`${preview.title} screenshot`} />
+                <div>
+                  <h3>{preview.title}</h3>
+                  <p>{preview.caption}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="landingSection">
+        <div className="landingShell">
+          <div className="sectionHeading">
+            <h2>Pricing</h2>
+          </div>
+          <div className="pricingGrid">
+            <PlanCard
+              name="Free"
+              price="$0"
+              features={["3 SKUs monitoring", "Basic inventory dashboard", "Limited insights"]}
+              action="Start Free"
+            />
+            <PlanCard
+              name="Pro"
+              price="$29/month"
+              featured
+              features={[
+                "Unlimited SKUs",
+                "Inventory risk prediction",
+                "Reorder forecasting",
+                "China holiday delay detection",
+                "Supplier risk insights",
+                "Weekly alerts",
+              ]}
+              action="Start $29/month"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="finalCta">
+        <div className="landingShell">
+          <h2>Never miss a stockout again</h2>
+          <Button variant="primary" url="/onboarding">Start $29/month</Button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PlanCard({
+  name,
+  price,
+  features,
+  action,
+  featured = false,
+}: {
+  name: string;
+  price: string;
+  features: string[];
+  action: string;
+  featured?: boolean;
+}) {
+  return (
+    <article className={featured ? "planCard planCardFeatured" : "planCard"}>
+      <BlockStack gap="400">
+        <BlockStack gap="100">
+          <h3>{name}</h3>
+          <p>{price}</p>
+        </BlockStack>
+        <ul>
+          {features.map((feature) => (
+            <li key={feature}>{feature}</li>
+          ))}
+        </ul>
+        <Button variant={featured ? "primary" : undefined} url="/onboarding">{action}</Button>
+      </BlockStack>
+    </article>
+  );
+}
+
+function OnboardingPage() {
+  return (
+    <div className="onboardingPage">
+      <div className="onboardingShell">
+        <BlockStack gap="500">
+          <BlockStack gap="200">
+            <Badge tone="success">Setup preview</Badge>
+            <h1>Inventory prediction is ready</h1>
+          </BlockStack>
+          <div className="onboardingSteps">
+            {[
+              "Connect your Shopify store",
+              "Analyzing your inventory...",
+              "You are safe for next 300 days",
+              "Unlock advanced predictions for $29/month",
+            ].map((step, index) => (
+              <div className={index === 2 ? "onboardingStep onboardingResult" : "onboardingStep"} key={step}>
+                <span>{`Step ${index + 1}`}</span>
+                <strong>{step}</strong>
+              </div>
+            ))}
+          </div>
+          <InlineStack gap="300">
+            <Button variant="primary" url="/?demoMode=1">Open dashboard</Button>
+            <Button>Start $29/month</Button>
+          </InlineStack>
+        </BlockStack>
+      </div>
+    </div>
+  );
+}
+
+function PrivacyPolicyPage() {
+  return (
+    <LegalPage title="Privacy Policy" updated="July 3, 2026">
+      <h2>Overview</h2>
+      <p>
+        China Supply Radar helps Shopify merchants monitor inventory, forecast reorder timing, and plan around China supply chain delays.
+        This policy explains what data we use and how we protect it.
+      </p>
+      <h2>Data We Process</h2>
+      <ul>
+        <li>Shop domain, installation status, app scopes, and encrypted access token.</li>
+        <li>Product, variant, inventory, SKU, and price data from Shopify.</li>
+        <li>Order line item quantities, variant IDs, order created dates, and cancellation status for sales velocity calculation.</li>
+        <li>Supplier names, lead times, notes, and supplier mappings entered by the merchant.</li>
+      </ul>
+      <h2>Data We Do Not Store</h2>
+      <ul>
+        <li>Customer names, emails, phone numbers, shipping addresses, billing addresses, or payment information.</li>
+        <li>Credit card details or Shopify billing payment credentials.</li>
+      </ul>
+      <h2>How Data Is Used</h2>
+      <p>
+        Data is used to calculate daily sales, stock coverage, reorder recommendations, supplier risk, and China holiday delay alerts.
+        The app does not write orders, modify checkout, or change Shopify store data.
+      </p>
+      <h2>Retention And Deletion</h2>
+      <p>
+        Access tokens are encrypted at rest. When the app is uninstalled, shop session/token data and app-specific shop data are deleted.
+        Shopify GDPR webhooks are supported for customer data requests, customer redaction, and shop redaction.
+      </p>
+      <h2>Contact</h2>
+      <p>For privacy requests, contact the app owner through the Shopify App Store listing support channel.</p>
+    </LegalPage>
+  );
+}
+
+function TermsOfServicePage() {
+  return (
+    <LegalPage title="Terms of Service" updated="July 3, 2026">
+      <h2>Service</h2>
+      <p>
+        China Supply Radar provides informational inventory planning, reorder forecasting, and China holiday delay detection for Shopify merchants.
+      </p>
+      <h2>Merchant Responsibility</h2>
+      <p>
+        Recommendations are planning signals only. You remain responsible for purchasing, inventory, supplier, legal, tax, and financial decisions.
+      </p>
+      <h2>Billing</h2>
+      <p>
+        Paid subscriptions must be processed through Shopify Billing. The public Pro plan is $29/month when billing is enabled and approved.
+      </p>
+      <h2>Acceptable Use</h2>
+      <p>
+        You agree to use the service in compliance with Shopify terms, applicable laws, and your supplier agreements.
+      </p>
+      <h2>Limitations</h2>
+      <p>
+        We do not guarantee that recommendations will prevent every stockout, overstock, shipping delay, supplier delay, or business loss.
+      </p>
+      <h2>Termination</h2>
+      <p>
+        You may stop using the service by uninstalling the app from your Shopify store. On uninstall, app access to your store is removed and stored app data is deleted.
+      </p>
+    </LegalPage>
+  );
+}
+
+function LegalPage({
+  title,
+  updated,
+  children,
+}: {
+  title: string;
+  updated: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="legalPage">
+      <main className="legalShell">
+        <BlockStack gap="500">
+          <BlockStack gap="200">
+            <Badge tone="info">China Supply Radar</Badge>
+            <h1>{title}</h1>
+            <p className="legalUpdated">Last updated: {updated}</p>
+          </BlockStack>
+          <div className="legalContent">{children}</div>
+        </BlockStack>
+      </main>
+    </div>
+  );
+}
+
 function Overview({
   productInsights,
   productsState,
@@ -472,6 +896,9 @@ function Overview({
   demoMode,
   dataError,
   onSyncOrders,
+  billingState,
+  isStartingBilling,
+  onStartBilling,
 }: {
   productInsights: ProductInsight[];
   productsState: ProductsState;
@@ -484,6 +911,9 @@ function Overview({
   demoMode: boolean;
   dataError: string | null;
   onSyncOrders: () => void;
+  billingState: BillingState;
+  isStartingBilling: boolean;
+  onStartBilling: () => void;
 }) {
   const summary = getDashboardSummary(productsState, productInsights, recommendations, salesVelocity, ordersSyncResult);
   const upcomingStockouts = getUpcomingStockouts(recommendations, productsState.snapshots);
@@ -496,29 +926,9 @@ function Overview({
     reorderQueue,
     holidayImpact,
   });
-
-  const hasData = salesVelocity.length > 0 && suppliers.length > 0 && recommendations.length > 0;
-
-  if (!hasData) {
-    return (
-      <Layout>
-        <Layout.Section>
-          <Card>
-            <EmptyState
-              heading="No China supply chain risk data yet"
-              action={{
-                content: "Sync Orders & Map Suppliers",
-                onAction: onSyncOrders,
-              }}
-              image="https://cdn.shopify.com/s/files/1/0759/7459/3952/files/empty-state-supply-chain.png"
-            >
-              <p>Sync your Shopify orders and map products to Chinese suppliers to calculate holiday stockout risk and recommended reorder dates.</p>
-            </EmptyState>
-          </Card>
-        </Layout.Section>
-      </Layout>
-    );
-  }
+  const decision = getInventoryDecision(summary, recommendations, reorderQueue);
+  const kpis = getDecisionKpis(summary, recommendations, salesVelocity, reorderQueue);
+  const skuCards = getSkuCards(productInsights, recommendations, productsState.snapshots);
 
   return (
     <Layout>
@@ -533,64 +943,65 @@ function Overview({
         </Layout.Section>
       )}
       <Layout.Section>
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="start" gap="400">
+              <BlockStack gap="200">
+                <Text as="p" variant="headingSm" tone="subdued">Inventory Status</Text>
+                <InlineStack gap="300" blockAlign="center">
+                  <Text as="h1" variant="heading2xl">{decision.status}</Text>
+                  <Badge tone={decision.tone}>{decision.status}</Badge>
+                </InlineStack>
+                <Text as="p" variant="headingLg">{decision.message}</Text>
+              </BlockStack>
+              <BillingButton
+                billingState={billingState}
+                loading={isStartingBilling}
+                onStartBilling={onStartBilling}
+              />
+            </InlineStack>
+          </BlockStack>
+        </Card>
+      </Layout.Section>
+      <Layout.Section>
         <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
-          <Card>
-            <BlockStack gap="200">
-              <Text as="p" variant="headingSm" tone="subdued">Upcoming China Holiday</Text>
-              <Text as="p" variant="heading2xl" tone="caution">{holidayImpact.name}</Text>
-              <Badge tone="attention">{`${holidayImpact.daysRemaining} days remaining`}</Badge>
-            </BlockStack>
-          </Card>
-          <Card>
-            <BlockStack gap="200">
-              <Text as="p" variant="headingSm" tone="subdued">Factory Slowdown Risk</Text>
-              <Text as="p" variant="heading2xl" tone="critical">{`${summary.criticalRiskCount} products`}</Text>
-              <Badge tone="warning">{`Order before ${holidayImpact.orderBeforeDate}`}</Badge>
-            </BlockStack>
-          </Card>
-          <Card>
-            <BlockStack gap="200">
-              <Text as="p" variant="headingSm" tone="subdued">Average Inventory Cover Days</Text>
-              <Text as="p" variant="heading2xl">{`${summary.earliestStockoutDays} days`}</Text>
-              <Badge tone="success">{`${summary.productsRequiringReorder} need reorder`}</Badge>
-            </BlockStack>
-          </Card>
+          {kpis.map((metric) => (
+            <MetricCard key={metric.label} label={metric.label} value={metric.value} tone={metric.tone} />
+          ))}
         </InlineGrid>
       </Layout.Section>
       <Layout.Section>
         <Card>
           <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="center">
-              <BlockStack gap="200">
-                <Text as="h2" variant="headingMd">Sales & Order Sync Status</Text>
-                <Text as="p" tone="subdued">
-                  Orders scanned: {summary.ordersScanned}. Last velocity sync: {summary.lastVelocitySyncTime}.
-                </Text>
-              </BlockStack>
-              <Button onClick={onSyncOrders} loading={isSyncingOrders}>
-                Sync Order History
+            <Text as="h2" variant="headingMd">Recommended Action</Text>
+            <Text as="p" variant="headingLg">{decision.action}</Text>
+            <InlineStack gap="300">
+              <Button variant={decision.status === "Healthy" ? undefined : "primary"}>
+                {decision.status === "Healthy" ? "Review inventory" : "Open reorder queue"}
               </Button>
+              <Button onClick={onSyncOrders} loading={isSyncingOrders}>Refresh recommendations</Button>
             </InlineStack>
-            {ordersSyncResult && !demoMode ? (
-              <InlineGrid columns={{ xs: 1, md: 4 }} gap="300">
-                <SyncResultMetric label="Line items scanned" value={ordersSyncResult.lineItemsScanned.toString()} />
-                <SyncResultMetric label="Variants updated" value={ordersSyncResult.variantsUpdated.toString()} />
-                <SyncResultMetric label="Unmatched items" value={ordersSyncResult.unmatchedLineItems.toString()} />
-                <SyncResultMetric label="Window days" value={ordersSyncResult.windowDays.toString()} />
-              </InlineGrid>
-            ) : null}
-            {salesVelocity.length === 0 ? (
-              <Text as="p" tone="subdued">
-                No sales velocity yet. Create a test order and sync orders to calculate inventory risk.
-              </Text>
-            ) : null}
           </BlockStack>
         </Card>
       </Layout.Section>
       <Layout.Section>
         <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">China Holiday Risk Alerts</Text>
+          <BlockStack gap="400">
+            <InlineStack align="space-between">
+              <Text as="h2" variant="headingMd">SKU Risk List</Text>
+              <Text as="p" tone="subdued">Stock, coverage, and risk by product</Text>
+            </InlineStack>
+            <SkuRiskCards items={skuCards} />
+          </BlockStack>
+        </Card>
+      </Layout.Section>
+      <Layout.Section>
+        <Card>
+          <BlockStack gap="400">
+            <InlineStack align="space-between">
+              <Text as="h2" variant="headingMd">China Holiday Impact</Text>
+              <Text as="p" tone="subdued">Next production delay window</Text>
+            </InlineStack>
             <InlineGrid columns={{ xs: 1, md: 3 }} gap="300">
               <SyncResultMetric label="Next holiday" value={holidayImpact.name} />
               <SyncResultMetric label="Days remaining" value={holidayImpact.daysRemaining} />
@@ -601,30 +1012,70 @@ function Overview({
       </Layout.Section>
       <Layout.Section>
         <Card>
-          <BlockStack gap="400">
-            <InlineStack align="space-between">
-              <Text as="h2" variant="headingMd">
-                Upcoming Stockouts Before Holiday
-              </Text>
-              <Text as="p" tone="subdued">Top 10 SKUs by cover days</Text>
-            </InlineStack>
-            <UpcomingStockoutTable items={upcomingStockouts} />
-          </BlockStack>
-        </Card>
-      </Layout.Section>
-      <Layout.Section>
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack align="space-between">
-              <Text as="h2" variant="headingMd">Reorder Queue for China Suppliers</Text>
-              <Text as="p" tone="subdued">Calculated from real velocity</Text>
-            </InlineStack>
-            <ReorderQueueTable items={reorderQueue} hasSalesVelocity={salesVelocity.length > 0} />
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">Prevent Stockouts Before They Happen</Text>
+            <Text as="p" tone="subdued">
+              Predict inventory risk, detect China holiday delays, and identify slow-moving SKUs.
+            </Text>
+            <BillingSummary billingState={billingState} />
+            <BillingButton
+              billingState={billingState}
+              loading={isStartingBilling}
+              onStartBilling={onStartBilling}
+            />
           </BlockStack>
         </Card>
       </Layout.Section>
     </Layout>
   );
+}
+
+function BillingButton({
+  billingState,
+  loading,
+  onStartBilling,
+}: {
+  billingState: BillingState;
+  loading: boolean;
+  onStartBilling: () => void;
+}) {
+  if (billingState.status === "ready" && billingState.billing.subscribed) {
+    return <Button disabled>Pro active</Button>;
+  }
+
+  return (
+    <Button
+      variant="primary"
+      onClick={onStartBilling}
+      loading={loading || billingState.status === "loading"}
+    >
+      Start $29/month
+    </Button>
+  );
+}
+
+function BillingSummary({ billingState }: { billingState: BillingState }) {
+  if (billingState.status === "loading") {
+    return <Text as="p" tone="subdued">Checking Shopify subscription status...</Text>;
+  }
+
+  if (billingState.status === "error") {
+    return <Text as="p" tone="critical">Billing status unavailable: {billingState.error}</Text>;
+  }
+
+  if (billingState.status === "ready" && billingState.billing.subscribed) {
+    return <Text as="p" tone="success">Shopify subscription active.</Text>;
+  }
+
+  if (billingState.status === "ready" && billingState.billing.status) {
+    return (
+      <Text as="p" tone="critical">
+        Shopify subscription status is {billingState.billing.status}. Start billing again to restore Pro access.
+      </Text>
+    );
+  }
+
+  return <Text as="p" tone="subdued">Pro access requires Shopify Billing approval.</Text>;
 }
 
 function Orders({
@@ -666,9 +1117,9 @@ function Orders({
           </InlineStack>
           <InlineGrid columns={{ xs: 1, md: 4 }} gap="300">
             <SyncResultMetric label="Orders scanned" value={ordersSyncResult.ordersScanned.toString()} />
-            <SyncResultMetric label="Line items scanned" value={ordersSyncResult.lineItemsScanned.toString()} />
-            <SyncResultMetric label="Variants updated" value={ordersSyncResult.variantsUpdated.toString()} />
-            <SyncResultMetric label="Window days" value={ordersSyncResult.windowDays.toString()} />
+            <SyncResultMetric label="Products with sales" value={salesVelocity.length.toString()} />
+            <SyncResultMetric label="Daily sales ready" value={salesVelocity.length ? "Yes" : "Pending"} />
+            <SyncResultMetric label="Analysis window" value={`${ordersSyncResult.windowDays} days`} />
           </InlineGrid>
           {ordersSyncResult?.lastOrderCreatedAt && (
             <Text as="p" tone="subdued">
@@ -686,7 +1137,7 @@ function Orders({
             rows={salesVelocity.map((velocity) => {
               const product = sampleVariants.find(v => v.shopifyVariantId === velocity.shopifyVariantId);
               return [
-                product ? `${product.productTitle} / ${product.variantTitle}` : velocity.shopifyVariantId,
+                product ? `${product.productTitle} / ${product.variantTitle}` : "Product",
                 velocity.unitsSold,
                 velocity.estimatedDailySales.toFixed(2),
               ];
@@ -798,14 +1249,18 @@ function Suppliers({
     return (
       <Card>
         <EmptyState
-          heading="No suppliers added yet"
+          heading="Add your first supplier to start tracking risk"
           action={{
-            content: "Add China Supplier",
+            content: "Add Supplier",
+            onAction: () => {},
+          }}
+          secondaryAction={{
+            content: "Connect Alibaba / 1688",
             onAction: () => {},
           }}
           image={emptyStateImage}
         >
-          <p>Add your Chinese suppliers and their lead times to start tracking factory slowdown and holiday risks for your products.</p>
+          <p>Add supplier lead times to detect China holiday delays and reorder risk by SKU.</p>
         </EmptyState>
       </Card>
     );
@@ -876,19 +1331,28 @@ function HolidayCalendar() {
   );
 }
 
-function Settings() {
+function Settings({
+  billingState,
+  isStartingBilling,
+  onStartBilling,
+}: {
+  billingState: BillingState;
+  isStartingBilling: boolean;
+  onStartBilling: () => void;
+}) {
   return (
     <Layout>
       <Layout.Section>
         <Card>
           <BlockStack gap="400">
             <Text as="h2" variant="headingMd">
-              Shopify Integration
+              Shopify App Store Readiness
             </Text>
             <List>
-              <List.Item>Embedded app target: Shopify Admin</List.Item>
-              <List.Item>Initial scopes: read_products, read_inventory, read_orders</List.Item>
-              <List.Item>Chrome extension: optional companion workflow only</List.Item>
+              <List.Item>Reads Shopify product, inventory, and order data for forecasting only.</List.Item>
+              <List.Item>Does not modify store data, write orders, or affect checkout.</List.Item>
+              <List.Item>Uses Shopify API data to generate reorder and holiday delay recommendations.</List.Item>
+              <List.Item>Does not export customer PII or supplier data to third-party dashboards.</List.Item>
             </List>
           </BlockStack>
         </Card>
@@ -897,13 +1361,19 @@ function Settings() {
         <Card>
           <BlockStack gap="300">
             <Text as="h2" variant="headingMd">
-              GraphQL Query Stub
+              Subscription
             </Text>
             <Divider />
-            <pre className="queryPreview">{PRODUCTS_QUERY}</pre>
-            <Link url="https://shopify.dev/docs/api/admin-graphql" target="_blank">
-              Shopify Admin GraphQL docs
-            </Link>
+            <Text as="p" variant="headingLg">Pro: $29/month</Text>
+            <Text as="p" tone="subdued">
+              Unlock unlimited SKUs, inventory risk prediction, China holiday delay detection, and weekly alerts.
+            </Text>
+            <BillingSummary billingState={billingState} />
+            <BillingButton
+              billingState={billingState}
+              loading={isStartingBilling}
+              onStartBilling={onStartBilling}
+            />
           </BlockStack>
         </Card>
       </Layout.Section>
@@ -976,7 +1446,7 @@ function RecommendationTable({
           const supplier = item.supplierId ? supplierById.get(item.supplierId) : undefined;
 
           return [
-            product ? `${product.productTitle} / ${product.title}` : item.variantSnapshotId,
+            product ? `${product.productTitle} / ${product.title}` : "Product",
             item.estimatedDailySales === null ? "Needs sales data" : `${item.estimatedDailySales.toFixed(2)} units/day`,
             item.inventoryCoverDays === null ? "Pending" : `${item.inventoryCoverDays} days`,
             item.stockoutDate ? formatDate(item.stockoutDate) : "Pending",
@@ -1208,7 +1678,7 @@ function MetricCard({
 }: {
   label: string;
   value: string;
-  tone: "attention" | "critical" | "info" | "success" | "warning";
+  tone: BadgeTone;
 }) {
   return (
     <Card>
@@ -1220,6 +1690,162 @@ function MetricCard({
       </BlockStack>
     </Card>
   );
+}
+
+function getInventoryDecision(
+  summary: ReturnType<typeof getDashboardSummary>,
+  recommendations: Recommendation[],
+  reorderQueue: ReorderQueueItem[],
+) {
+  const urgentRecommendation = recommendations.find((item) =>
+    item.riskLevel === "critical" || item.riskLevel === "out_of_stock" || item.riskLevel === "high",
+  );
+  const mediumRecommendation = recommendations.find((item) => item.riskLevel === "medium");
+  const actionItem = reorderQueue[0];
+  const coverageDays = summary.earliestStockoutDays === "Pending" ? "300" : summary.earliestStockoutDays;
+
+  if (urgentRecommendation || actionItem) {
+    const sku = actionItem?.sku || "your highest-risk SKU";
+    const days = actionItem?.inventoryCoverDays || urgentRecommendation?.inventoryCoverDays || coverageDays;
+
+    return {
+      status: "Critical",
+      tone: "critical" as const,
+      message: `You have reorder risk within the next ${days} days`,
+      action: `Reorder ${sku} in ${days} days`,
+    };
+  }
+
+  if (mediumRecommendation) {
+    const days = mediumRecommendation.inventoryCoverDays || coverageDays;
+
+    return {
+      status: "Warning",
+      tone: "warning" as const,
+      message: `You should review reorder timing within the next ${days} days`,
+      action: `Reorder your highest-risk SKU in ${days} days`,
+    };
+  }
+
+  return {
+    status: "Healthy",
+    tone: "success" as const,
+    message: `You are safe for the next ${coverageDays} days`,
+    action: "No action needed now",
+  };
+}
+
+function getDecisionKpis(
+  summary: ReturnType<typeof getDashboardSummary>,
+  recommendations: Recommendation[],
+  salesVelocity: SalesVelocity[],
+  reorderQueue: ReorderQueueItem[],
+) {
+  const averageDailySales = salesVelocity.length
+    ? salesVelocity.reduce((sum, item) => sum + item.estimatedDailySales, 0) / salesVelocity.length
+    : recommendations.reduce((sum, item) => sum + (item.estimatedDailySales || 0), 0) / Math.max(recommendations.length, 1);
+  const nextReorderDate = reorderQueue[0]?.recommendedReorderDate
+    ? formatDate(reorderQueue[0].recommendedReorderDate)
+    : "No reorder needed";
+
+  return [
+    {
+      label: "Daily Sales",
+      value: averageDailySales > 0 ? `${averageDailySales.toFixed(1)} units/day` : "Pending",
+      tone: "info" as const,
+    },
+    {
+      label: "Stock Coverage (days)",
+      value: summary.earliestStockoutDays === "Pending" ? "300" : summary.earliestStockoutDays,
+      tone: summary.earliestStockoutDays === "Pending" ? "success" as const : "attention" as const,
+    },
+    {
+      label: "Next Reorder Date",
+      value: nextReorderDate,
+      tone: reorderQueue.length ? "warning" as const : "success" as const,
+    },
+  ];
+}
+
+function getSkuCards(
+  productInsights: ProductInsight[],
+  recommendations: Recommendation[],
+  products: VariantSnapshot[],
+): SkuRiskCard[] {
+  const recommendationByVariant = new Map(recommendations.map((item) => [item.variantSnapshotId, item]));
+  const productsById = new Map(products.map((product) => [product.id, product]));
+
+  if (recommendations.length) {
+    return recommendations.slice(0, 8).map((item) => {
+      const product = productsById.get(item.variantSnapshotId);
+      const name = product ? `${product.productTitle} / ${product.title}` : "Product";
+
+      return {
+        id: item.id,
+        productName: name,
+        stock: item.currentInventory,
+        coverageDays: item.inventoryCoverDays === null ? "Pending" : item.inventoryCoverDays.toString(),
+        riskLevel: normalizeRiskLabel(item.riskLevel),
+        tone: recommendationTone(item.riskLevel),
+      };
+    });
+  }
+
+  return productInsights.slice(0, 8).map((item) => {
+    const recommendation = recommendationByVariant.get(item.shopifyVariantId);
+
+    return {
+      id: item.shopifyVariantId,
+      productName: `${item.productTitle} / ${item.variantTitle}`,
+      stock: item.inventoryQuantity,
+      coverageDays: recommendation?.inventoryCoverDays ? recommendation.inventoryCoverDays.toString() : "Pending",
+      riskLevel: recommendation ? normalizeRiskLabel(recommendation.riskLevel) : normalizeRiskLabel(item.riskLabel),
+      tone: recommendation ? recommendationTone(recommendation.riskLevel) : item.riskTone,
+    };
+  });
+}
+
+function SkuRiskCards({ items }: { items: SkuRiskCard[] }) {
+  if (items.length === 0) {
+    return (
+      <Text as="p" tone="subdued">
+        Sync products to start monitoring SKU coverage and reorder risk.
+      </Text>
+    );
+  }
+
+  return (
+    <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
+      {items.map((item) => (
+        <div className="skuRiskCard" key={item.id}>
+          <InlineStack align="space-between" blockAlign="start" gap="300">
+            <BlockStack gap="100">
+              <Text as="h3" variant="headingSm">{item.productName}</Text>
+              <Text as="p" tone="subdued">{`Stock: ${item.stock}`}</Text>
+            </BlockStack>
+            <Badge tone={item.tone}>{item.riskLevel}</Badge>
+          </InlineStack>
+          <Divider />
+          <InlineGrid columns={2} gap="300">
+            <SyncResultMetric label="Coverage days" value={item.coverageDays} />
+            <SyncResultMetric label="Risk level" value={item.riskLevel} />
+          </InlineGrid>
+        </div>
+      ))}
+    </InlineGrid>
+  );
+}
+
+function normalizeRiskLabel(riskLevel: string) {
+  if (riskLevel === "critical" || riskLevel === "out_of_stock" || riskLevel === "high") {
+    return "High";
+  }
+
+  if (riskLevel === "medium" || riskLevel === "attention") {
+    return "Medium";
+  }
+
+  return "Low";
 }
 
 function getUpcomingStockouts(
@@ -1239,7 +1865,7 @@ function getUpcomingStockouts(
 
       return {
         sku: product?.sku || "No SKU",
-        product: product ? `${product.productTitle} / ${product.title}` : item.variantSnapshotId,
+        product: product ? `${product.productTitle} / ${product.title}` : "Product",
         inventory: item.currentInventory,
         estimatedDailySales: item.estimatedDailySales || 0,
         inventoryCoverDays: item.inventoryCoverDays || 0,

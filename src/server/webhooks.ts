@@ -2,11 +2,25 @@ import { verifyShopifyWebhookHmac } from "../security/shopifyHmac.ts";
 import type { AppConfig } from "./config.ts";
 import type { SessionStore } from "./sessionStore.ts";
 
+export type ShopDataCleanupStore = {
+  shopSession?: DeleteManyModel;
+  variantSnapshot?: DeleteManyModel;
+  supplier?: DeleteManyModel;
+  supplierMapping?: DeleteManyModel;
+  salesVelocity?: DeleteManyModel;
+  recommendation?: DeleteManyModel;
+};
+
+type DeleteManyModel = {
+  deleteMany(args: { where: { shop: string } }): Promise<{ count: number }>;
+};
+
 export async function handleAppUninstalledWebhook(
   rawBody: string,
   headers: Headers,
   config: AppConfig,
   sessionStore: SessionStore,
+  cleanupStores: ShopDataCleanupStore[] = [],
 ): Promise<void> {
   const shopDomain = headers.get("x-shopify-shop-domain");
   const hmac = headers.get("x-shopify-hmac-sha256");
@@ -20,7 +34,7 @@ export async function handleAppUninstalledWebhook(
   }
 
   console.log(`[SECURITY] App uninstalled for shop: ${shopDomain}`);
-  await sessionStore.markUninstalled(shopDomain, new Date().toISOString());
+  await deleteShopDataForShop(shopDomain, sessionStore, cleanupStores);
 }
 
 /**
@@ -84,6 +98,7 @@ export async function handleShopRedactWebhook(
   headers: Headers,
   config: AppConfig,
   sessionStore: SessionStore,
+  cleanupStores: ShopDataCleanupStore[] = [],
 ): Promise<void> {
   const shopDomain = headers.get("x-shopify-shop-domain");
   const hmac = headers.get("x-shopify-hmac-sha256");
@@ -99,8 +114,30 @@ export async function handleShopRedactWebhook(
   console.log(`[SECURITY] Received SHOP_REDACT for shop: ${shopDomain}`);
   console.log(`[INFO] Deleting all shop-specific session data for: ${shopDomain}`);
   
-  // Delete all sessions for this shop
-  await sessionStore.deleteShopSessions(shopDomain);
+  await deleteShopDataForShop(shopDomain, sessionStore, cleanupStores);
   
   console.log(`[INFO] Shop data deletion completed for: ${shopDomain}`);
+}
+
+export async function deleteShopDataForShop(
+  shopDomain: string,
+  sessionStore: SessionStore,
+  cleanupStores: ShopDataCleanupStore[] = [],
+): Promise<void> {
+  await sessionStore.deleteShopSessions(shopDomain);
+
+  const models = cleanupStores.flatMap((store) => [
+    store.variantSnapshot,
+    store.supplierMapping,
+    store.salesVelocity,
+    store.recommendation,
+    store.supplier,
+    store.shopSession,
+  ]);
+
+  await Promise.all(
+    models
+      .filter((model): model is DeleteManyModel => Boolean(model?.deleteMany))
+      .map((model) => model.deleteMany({ where: { shop: shopDomain } })),
+  );
 }

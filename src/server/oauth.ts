@@ -36,7 +36,7 @@ export async function buildOAuthStartUrl(
   const url = new URL(`https://${shopDomain}/admin/oauth/authorize`);
   url.searchParams.set("client_id", config.apiKey);
   url.searchParams.set("scope", config.scopes.join(","));
-  url.searchParams.set("redirect_uri", `${config.appUrl}/auth/callback`);
+  url.searchParams.set("redirect_uri", `${config.appUrl}/api/auth/callback`);
   url.searchParams.set("state", state);
 
   return url.toString();
@@ -98,6 +98,43 @@ export async function exchangeShopifyAccessToken(
       client_id: config.apiKey,
       client_secret: config.apiSecret,
       code,
+      expiring: "1",
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Shopify token exchange failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as { access_token?: string };
+
+  if (!payload.access_token) {
+    throw new Error("Shopify token exchange did not return access_token");
+  }
+
+  return payload.access_token;
+}
+
+export async function exchangeShopifySessionTokenForOfflineAccessToken(
+  shopDomain: string,
+  sessionToken: string,
+  config: AppConfig,
+): Promise<string> {
+  assertShopDomain(shopDomain);
+
+  const response = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      client_id: config.apiKey,
+      client_secret: config.apiSecret,
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      subject_token: sessionToken,
+      subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      requested_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
+      expiring: "1",
     }),
   });
 

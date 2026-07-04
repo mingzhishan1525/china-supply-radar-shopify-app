@@ -1,5 +1,11 @@
 import { ShopifyAdminError } from "../shopify/adminClient.ts";
 import { verifyShopifySessionToken } from "../security/shopifySessionToken.ts";
+import { exchangeShopifySessionTokenForOfflineAccessToken } from "./oauth.ts";
+import {
+  BillingConfigurationError,
+  createProSubscriptionApprovalUrl,
+  getBillingStatusForShop,
+} from "./billing.ts";
 import type { AppConfig } from "./config.ts";
 import {
   listVariantSnapshotsForShop,
@@ -61,6 +67,41 @@ export async function handleApiRequest(
           isInstalled: session.isInstalled,
           installedAt: session.installedAt,
           uninstalledAt: session.uninstalledAt,
+        },
+      };
+    }
+
+    if (method === "GET" && path === "/api/billing/status") {
+      const session = await requireInstalledShop(query, deps);
+
+      return {
+        status: 200,
+        body: {
+          shop: session.shop,
+          billing: await getBillingStatusForShop(session.shop, deps.sessionStore),
+        },
+      };
+    }
+
+    if (
+      method === "POST" &&
+      (path === "/api/billing/create" || path === "/api/billing/subscribe")
+    ) {
+      const session = await requireInstalledShop(query, deps);
+
+      if (!deps.config) {
+        throw new ApiError("missing_config", "Billing requires app configuration", 500);
+      }
+
+      return {
+        status: 200,
+        body: {
+          shop: session.shop,
+          confirmationUrl: await createProSubscriptionApprovalUrl(
+            session.shop,
+            deps.config,
+            deps.sessionStore,
+          ),
         },
       };
     }
@@ -222,6 +263,13 @@ export async function handleApiRequest(
       };
     }
 
+    if (error instanceof BillingConfigurationError) {
+      return {
+        status: error.status,
+        body: errorBody(error.code, error.message),
+      };
+    }
+
     if (error instanceof SupplyChainError) {
       return {
         status: error.status,
@@ -264,6 +312,17 @@ async function requireInstalledShop(query: URLSearchParams, deps: ApiDeps) {
       });
       throw new ApiError("invalid_session_token", "Invalid Shopify session token", 401);
     }
+
+    const offlineAccessToken = await exchangeShopifySessionTokenForOfflineAccessToken(
+      shop,
+      token,
+      deps.config,
+    );
+    await deps.sessionStore.save({
+      shop,
+      accessToken: offlineAccessToken,
+      scope: deps.config.scopes.join(","),
+    });
   } else {
     console.warn("[API auth] request without Shopify session token", {
       shop,

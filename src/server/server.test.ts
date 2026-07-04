@@ -9,8 +9,15 @@ import {
 import {
   createShopifyAdminClient,
   ShopifyAdminError,
+  type ShopifyGraphqlClient,
 } from "../shopify/adminClient.ts";
 import { handleApiRequest } from "./api.ts";
+import {
+  APP_MANAGED_BILLING_FIX,
+  BillingConfigurationError,
+  createProSubscriptionApprovalUrl,
+  getBillingStatusForShop,
+} from "./billing.ts";
 import { getAppConfig, type AppConfig } from "./config.ts";
 import { handleOAuthCallback, MemoryOAuthStateStore } from "./oauth.ts";
 import { syncOrdersAndSalesVelocityForShop } from "./ordersSync.ts";
@@ -142,7 +149,7 @@ describe("OAuth callback", () => {
 });
 
 describe("app/uninstalled webhook", () => {
-  it("marks shop as uninstalled after HMAC verification", async () => {
+  it("deletes shop session and token after HMAC verification", async () => {
     const sessionStore = new MemorySessionStore(config.encryptionSecret);
     await sessionStore.save({
       shop: "demo-store.myshopify.com",
@@ -162,8 +169,7 @@ describe("app/uninstalled webhook", () => {
     await handleAppUninstalledWebhook(rawBody, headers, config, sessionStore);
 
     const session = await sessionStore.load("demo-store.myshopify.com");
-    assert.equal(session?.isInstalled, false);
-    assert.ok(session?.uninstalledAt);
+    assert.equal(session, null);
   });
 });
 
@@ -256,6 +262,126 @@ describe("Shopify GraphQL client", () => {
     await assert.rejects(
       throttledClient.graphql("query { shop { name } }"),
       (error) => error instanceof ShopifyAdminError && error.code === "throttled",
+    );
+  });
+});
+
+describe("Shopify Billing", () => {
+  it("detects missing and active Pro subscriptions", async () => {
+    const sessionStore = new MemorySessionStore(config.encryptionSecret);
+    const inactiveClient: ShopifyGraphqlClient = {
+      shop: "demo-store.myshopify.com",
+      graphql: async <TData,>() => ({
+        currentAppInstallation: {
+          activeSubscriptions: [],
+        },
+      }) as TData,
+    };
+    const activeClient: ShopifyGraphqlClient = {
+      shop: "demo-store.myshopify.com",
+      graphql: async <TData,>() => ({
+        currentAppInstallation: {
+          activeSubscriptions: [
+            {
+              id: "gid://shopify/AppSubscription/1",
+              name: "China Supply Radar Pro",
+              status: "ACTIVE",
+              currentPeriodEnd: "2026-08-03T00:00:00Z",
+              lineItems: [
+                {
+                  plan: {
+                    pricingDetails: {
+                      __typename: "AppRecurringPricing",
+                      interval: "EVERY_30_DAYS",
+                      price: {
+                        amount: "29.0",
+                        currencyCode: "USD",
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      }) as TData,
+    };
+
+    assert.equal((await getBillingStatusForShop("demo-store.myshopify.com", sessionStore, inactiveClient)).subscribed, false);
+
+    const active = await getBillingStatusForShop("demo-store.myshopify.com", sessionStore, activeClient);
+    assert.equal(active.subscribed, true);
+    assert.equal(active.planName, "China Supply Radar Pro");
+    assert.equal(active.status, "ACTIVE");
+  });
+
+  it("creates a $29 monthly Shopify Billing approval URL", async () => {
+    const sessionStore = new MemorySessionStore(config.encryptionSecret);
+    let variables: Record<string, unknown> | undefined;
+    const client: ShopifyGraphqlClient = {
+      shop: "demo-store.myshopify.com",
+      graphql: async <TData,>(_query: string, nextVariables?: Record<string, unknown>) => {
+        variables = nextVariables;
+
+        return {
+          appSubscriptionCreate: {
+            confirmationUrl: "https://demo-store.myshopify.com/admin/charges/approve",
+            appSubscription: {
+              id: "gid://shopify/AppSubscription/1",
+              status: "PENDING",
+            },
+            userErrors: [],
+          },
+        } as TData;
+      },
+    };
+
+    const confirmationUrl = await createProSubscriptionApprovalUrl(
+      "demo-store.myshopify.com",
+      config,
+      sessionStore,
+      client,
+    );
+    const lineItems = variables?.lineItems as Array<{
+      plan: {
+        appRecurringPricingDetails: {
+          price: { amount: number; currencyCode: string };
+          interval: string;
+        };
+      };
+    }>;
+
+    assert.equal(confirmationUrl, "https://demo-store.myshopify.com/admin/charges/approve");
+    assert.equal(variables?.name, "China Supply Radar Pro");
+    assert.equal(variables?.returnUrl, "https://app.example.com/billing/return?shop=demo-store.myshopify.com");
+    assert.equal(lineItems[0].plan.appRecurringPricingDetails.price.amount, 29);
+    assert.equal(lineItems[0].plan.appRecurringPricingDetails.price.currencyCode, "USD");
+    assert.equal(lineItems[0].plan.appRecurringPricingDetails.interval, "EVERY_30_DAYS");
+  });
+
+  it("reports a clear blocker when Shopify Managed Pricing is enabled", async () => {
+    const sessionStore = new MemorySessionStore(config.encryptionSecret);
+    const client: ShopifyGraphqlClient = {
+      shop: "demo-store.myshopify.com",
+      graphql: async <TData,>() => ({
+        appSubscriptionCreate: {
+          confirmationUrl: null,
+          appSubscription: null,
+          userErrors: [
+            {
+              field: null,
+              message: "Managed Pricing Apps cannot use the Billing API (to create charges).",
+            },
+          ],
+        },
+      }) as TData,
+    };
+
+    await assert.rejects(
+      createProSubscriptionApprovalUrl("demo-store.myshopify.com", config, sessionStore, client),
+      (error) =>
+        error instanceof BillingConfigurationError &&
+        error.message.includes(APP_MANAGED_BILLING_FIX),
     );
   });
 });

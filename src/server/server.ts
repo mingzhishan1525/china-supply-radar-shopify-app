@@ -17,6 +17,7 @@ import {
 } from "./webhooks.ts";
 
 const config = loadConfigOrExit();
+console.log("[FIX REQUIRED] Switch billing model to App-Managed Billing in Shopify Partner Dashboard");
 const stateStore = new MemoryOAuthStateStore();
 const { sessionStore, variantStore, supplyChainStore } = await createStores(config);
 const distDir = resolve(process.cwd(), "dist");
@@ -38,7 +39,10 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === "GET" && requestUrl.pathname === "/auth/callback") {
+    if (
+      request.method === "GET" &&
+      (requestUrl.pathname === "/api/auth/callback" || requestUrl.pathname === "/auth/callback")
+    ) {
       const result = await handleOAuthCallback(
         requestUrl.toString(),
         config,
@@ -57,7 +61,10 @@ const server = createServer(async (request, response) => {
       
       try {
         if (requestUrl.pathname === "/webhooks/app/uninstalled") {
-          await handleAppUninstalledWebhook(rawBody, headers, config, sessionStore);
+          await handleAppUninstalledWebhook(rawBody, headers, config, sessionStore, [
+            variantStore,
+            supplyChainStore,
+          ]);
           response.writeHead(200);
           response.end("ok");
           return;
@@ -78,7 +85,10 @@ const server = createServer(async (request, response) => {
         }
 
         if (requestUrl.pathname === "/webhooks/gdpr/shop_redact") {
-          await handleShopRedactWebhook(rawBody, headers, config, sessionStore);
+          await handleShopRedactWebhook(rawBody, headers, config, sessionStore, [
+            variantStore,
+            supplyChainStore,
+          ]);
           response.writeHead(200);
           response.end("ok");
           return;

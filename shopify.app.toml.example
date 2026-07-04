@@ -11,7 +11,7 @@ scopes = "read_products,read_inventory,read_orders"
 
 [auth]
 redirect_urls = [
-  "REQUIRES_PUBLIC_HTTPS_APP_URL/auth/callback"
+  "REQUIRES_PUBLIC_HTTPS_APP_URL/api/auth/callback"
 ]
 
 [webhooks]

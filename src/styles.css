@@ -14,3 +14,299 @@ body {
   padding: 16px;
   white-space: pre-wrap;
 }
+
+.landingPage,
+.onboardingPage {
+  min-height: 100vh;
+  background: #f7f8f6;
+  color: #111827;
+}
+
+.landingShell {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+}
+
+.landingHero {
+  background: #0b1f1a;
+  color: #ffffff;
+  padding: 72px 0 56px;
+}
+
+.landingHeroGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(320px, 1.1fr);
+  gap: 40px;
+  align-items: center;
+}
+
+.landingHero h1,
+.onboardingPage h1 {
+  margin: 0;
+  font-size: clamp(42px, 6vw, 68px);
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.landingHero p {
+  max-width: 620px;
+  margin: 0;
+  color: #d7f2e7;
+  font-size: 20px;
+  line-height: 1.55;
+}
+
+.heroPreview,
+.screenshotCard,
+.planCard,
+.valueCard,
+.stepCard,
+.skuRiskCard,
+.onboardingStep {
+  border: 1px solid #d9e2dd;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.heroPreview {
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+}
+
+.heroPreview img,
+.screenshotCard img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.landingBand {
+  padding: 24px 0;
+  background: #ffffff;
+  border-bottom: 1px solid #dfe5e1;
+}
+
+.valueGrid,
+.stepsGrid,
+.pricingGrid,
+.screenshotGrid {
+  display: grid;
+  gap: 18px;
+}
+
+.valueGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.valueCard {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 18px;
+}
+
+.valueCard span {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #16a34a;
+}
+
+.landingSection {
+  padding: 64px 0;
+}
+
+.sectionHeading {
+  margin-bottom: 24px;
+}
+
+.sectionHeading h2,
+.finalCta h2 {
+  margin: 0;
+  font-size: 36px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.stepsGrid,
+.pricingGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pricingGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.stepCard,
+.planCard,
+.screenshotCard {
+  padding: 22px;
+}
+
+.stepCard span,
+.onboardingStep span {
+  display: inline-flex;
+  margin-bottom: 16px;
+  color: #047857;
+  font-weight: 700;
+}
+
+.stepCard h3,
+.planCard h3,
+.screenshotCard h3 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.previewSection {
+  background: #eef3f0;
+}
+
+.screenshotGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.screenshotCard {
+  overflow: hidden;
+  padding: 0;
+}
+
+.screenshotCard div {
+  padding: 18px;
+}
+
+.screenshotCard p,
+.planCard p {
+  margin: 8px 0 0;
+  color: #4b5563;
+}
+
+.planCard ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #374151;
+  line-height: 1.8;
+}
+
+.planCardFeatured {
+  border-color: #0f766e;
+  box-shadow: inset 0 0 0 1px #0f766e, 0 18px 48px rgba(15, 118, 110, 0.14);
+}
+
+.finalCta {
+  padding: 56px 0 72px;
+  background: #111827;
+  color: #ffffff;
+  text-align: center;
+}
+
+.finalCta h2 {
+  margin-bottom: 24px;
+}
+
+.skuRiskCard {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  box-shadow: 0 8px 24px rgba(17, 24, 39, 0.06);
+}
+
+.onboardingPage {
+  display: grid;
+  place-items: center;
+  padding: 48px 16px;
+}
+
+.onboardingShell {
+  width: min(760px, 100%);
+  padding: 36px;
+  border: 1px solid #d9e2dd;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 22px 60px rgba(17, 24, 39, 0.1);
+}
+
+.onboardingSteps {
+  display: grid;
+  gap: 14px;
+}
+
+.onboardingStep {
+  padding: 18px;
+}
+
+.onboardingResult {
+  border-color: #16a34a;
+  background: #f0fdf4;
+}
+
+.legalPage {
+  min-height: 100vh;
+  background: #f7f8f6;
+  padding: 48px 16px;
+  color: #111827;
+}
+
+.legalShell {
+  width: min(820px, 100%);
+  margin: 0 auto;
+  padding: 34px;
+  border: 1px solid #d9e2dd;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.legalShell h1 {
+  margin: 0;
+  font-size: 42px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.legalUpdated {
+  margin: 0;
+  color: #6b7280;
+}
+
+.legalContent {
+  display: grid;
+  gap: 22px;
+  color: #374151;
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.legalContent h2 {
+  margin: 0 0 -10px;
+  color: #111827;
+  font-size: 22px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.legalContent p,
+.legalContent ul {
+  margin: 0;
+}
+
+.legalContent ul {
+  padding-left: 22px;
+}
+
+@media (max-width: 860px) {
+  .landingHeroGrid,
+  .valueGrid,
+  .stepsGrid,
+  .pricingGrid,
+  .screenshotGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .landingHero {
+    padding-top: 48px;
+  }
+}

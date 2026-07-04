@@ -44,6 +44,7 @@ export class MemorySupplyChainStore implements SupplyChainClient {
       this.suppliers.set(args.where.id, row);
       return row;
     },
+    deleteMany: async (args: { where: { shop: string } }) => deleteRowsForShop(this.suppliers, args.where.shop),
   };
 
   readonly supplierMapping = {
@@ -97,6 +98,7 @@ export class MemorySupplyChainStore implements SupplyChainClient {
       this.mappings.delete(mappingKey(previous.shop, previous.variantSnapshotId));
       return previous;
     },
+    deleteMany: async (args: { where: { shop: string } }) => deleteRowsForShop(this.mappings, args.where.shop),
   };
 
   readonly variantSnapshot = {
@@ -108,6 +110,7 @@ export class MemorySupplyChainStore implements SupplyChainClient {
         return row.shop === args.where.shop && (!args.where.id || row.id === args.where.id);
       }) || null;
     },
+    deleteMany: async (args: { where: { shop: string } }) => deleteRowsForShop(this.variants, args.where.shop),
   };
 
   readonly salesVelocity = {
@@ -129,6 +132,7 @@ export class MemorySupplyChainStore implements SupplyChainClient {
       this.velocities.set(key, row);
       return row;
     },
+    deleteMany: async (args: { where: { shop: string } }) => deleteRowsForShop(this.velocities, args.where.shop),
   };
 
   readonly recommendation = {
@@ -149,6 +153,7 @@ export class MemorySupplyChainStore implements SupplyChainClient {
       this.recommendations.set(key, row);
       return row;
     },
+    deleteMany: async (args: { where: { shop: string } }) => deleteRowsForShop(this.recommendations, args.where.shop),
   };
 
   addVariant(variant: VariantSnapshot): VariantSnapshot {
@@ -200,4 +205,20 @@ function withTimestamps<T extends { createdAt?: Date | string; updatedAt?: Date 
     createdAt: row.createdAt || now,
     updatedAt: row.updatedAt || now,
   };
+}
+
+function deleteRowsForShop<T extends { shop: string }>(
+  rows: Map<string, T>,
+  shop: string,
+): Promise<{ count: number }> {
+  let count = 0;
+
+  for (const [key, row] of rows.entries()) {
+    if (row.shop === shop) {
+      rows.delete(key);
+      count += 1;
+    }
+  }
+
+  return Promise.resolve({ count });
 }

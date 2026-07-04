@@ -42,6 +42,18 @@ export class MemoryVariantSnapshotStore implements VariantSnapshotPrismaClient {
           return left.title.localeCompare(right.title);
         });
     },
+    deleteMany: async (args: { where: { shop: string } }) => {
+      let count = 0;
+
+      for (const [key, row] of this.rows.entries()) {
+        if (row.shop === args.where.shop) {
+          this.rows.delete(key);
+          count += 1;
+        }
+      }
+
+      return { count };
+    },
   };
 }
 
