@@ -1,5 +1,6 @@
 import { verifyShopifyWebhookHmac } from "../security/shopifyHmac.ts";
 import type { AppConfig } from "./config.ts";
+import { trackGrowthEvent } from "./growthTracking.ts";
 import type { SessionStore } from "./sessionStore.ts";
 
 export type ShopDataCleanupStore = {
@@ -15,25 +16,54 @@ type DeleteManyModel = {
   deleteMany(args: { where: { shop: string } }): Promise<{ count: number }>;
 };
 
+const WEBHOOK_AUTHENTICATION_ERROR_PREFIX = "Webhook authentication failed";
+
+export function isWebhookAuthenticationError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return error.message.startsWith(WEBHOOK_AUTHENTICATION_ERROR_PREFIX);
+}
+
+function getAuthenticatedShopDomain(
+  rawBody: string,
+  headers: Headers,
+  apiSecret: string,
+): string {
+  const shopDomain = headers.get("x-shopify-shop-domain");
+  const hmac = headers.get("x-shopify-hmac-sha256");
+
+  if (!shopDomain) {
+    throw new Error(`${WEBHOOK_AUTHENTICATION_ERROR_PREFIX}: missing shop domain`);
+  }
+
+  if (!verifyShopifyWebhookHmac(rawBody, hmac, apiSecret)) {
+    throw new Error(`${WEBHOOK_AUTHENTICATION_ERROR_PREFIX}: invalid HMAC`);
+  }
+
+  return shopDomain;
+}
+
 export async function handleAppUninstalledWebhook(
   rawBody: string,
   headers: Headers,
   config: AppConfig,
   sessionStore: SessionStore,
   cleanupStores: ShopDataCleanupStore[] = [],
+  trackEvent = trackGrowthEvent,
 ): Promise<void> {
-  const shopDomain = headers.get("x-shopify-shop-domain");
-  const hmac = headers.get("x-shopify-hmac-sha256");
-
-  if (!shopDomain) {
-    throw new Error("Webhook is missing shop domain");
-  }
-
-  if (!verifyShopifyWebhookHmac(rawBody, hmac, config.apiSecret)) {
-    throw new Error("Webhook HMAC verification failed");
-  }
+  const shopDomain = getAuthenticatedShopDomain(rawBody, headers, config.apiSecret);
 
   console.log(`[SECURITY] App uninstalled for shop: ${shopDomain}`);
+  await trackEvent(config, {
+    eventType: "SUBSCRIPTION_CANCEL",
+    source: "shopify",
+    shop: shopDomain,
+    metadata: {
+      trigger: "app_uninstalled_webhook",
+    },
+  });
   await deleteShopDataForShop(shopDomain, sessionStore, cleanupStores);
 }
 
@@ -47,16 +77,7 @@ export async function handleCustomersDataRequestWebhook(
   headers: Headers,
   config: AppConfig,
 ): Promise<void> {
-  const shopDomain = headers.get("x-shopify-shop-domain");
-  const hmac = headers.get("x-shopify-hmac-sha256");
-
-  if (!shopDomain) {
-    throw new Error("Webhook is missing shop domain");
-  }
-
-  if (!verifyShopifyWebhookHmac(rawBody, hmac, config.apiSecret)) {
-    throw new Error("Webhook HMAC verification failed");
-  }
+  const shopDomain = getAuthenticatedShopDomain(rawBody, headers, config.apiSecret);
 
   console.log(`[SECURITY] Received CUSTOMERS_DATA_REQUEST for shop: ${shopDomain}`);
   console.log(`[INFO] No customer personal data stored, no action required`);
@@ -72,16 +93,7 @@ export async function handleCustomersRedactWebhook(
   headers: Headers,
   config: AppConfig,
 ): Promise<void> {
-  const shopDomain = headers.get("x-shopify-shop-domain");
-  const hmac = headers.get("x-shopify-hmac-sha256");
-
-  if (!shopDomain) {
-    throw new Error("Webhook is missing shop domain");
-  }
-
-  if (!verifyShopifyWebhookHmac(rawBody, hmac, config.apiSecret)) {
-    throw new Error("Webhook HMAC verification failed");
-  }
+  const shopDomain = getAuthenticatedShopDomain(rawBody, headers, config.apiSecret);
 
   console.log(`[SECURITY] Received CUSTOMERS_REDACT for shop: ${shopDomain}`);
   console.log(`[INFO] No customer personal data stored, no action required`);
@@ -100,16 +112,7 @@ export async function handleShopRedactWebhook(
   sessionStore: SessionStore,
   cleanupStores: ShopDataCleanupStore[] = [],
 ): Promise<void> {
-  const shopDomain = headers.get("x-shopify-shop-domain");
-  const hmac = headers.get("x-shopify-hmac-sha256");
-
-  if (!shopDomain) {
-    throw new Error("Webhook is missing shop domain");
-  }
-
-  if (!verifyShopifyWebhookHmac(rawBody, hmac, config.apiSecret)) {
-    throw new Error("Webhook HMAC verification failed");
-  }
+  const shopDomain = getAuthenticatedShopDomain(rawBody, headers, config.apiSecret);
 
   console.log(`[SECURITY] Received SHOP_REDACT for shop: ${shopDomain}`);
   console.log(`[INFO] Deleting all shop-specific session data for: ${shopDomain}`);

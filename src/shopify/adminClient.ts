@@ -8,6 +8,7 @@ export type ShopifyGraphqlClient = {
 export type ShopifyAdminClientOptions = {
   apiVersion?: string;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 };
 
 export class ShopifyAdminError extends Error {
@@ -53,6 +54,7 @@ export async function createShopifyAdminClient(
 
   const apiVersion = options.apiVersion || "2026-04";
   const fetchImpl = options.fetchImpl || fetch;
+  const timeoutMs = options.timeoutMs ?? 15000;
 
   return {
     shop,
@@ -67,6 +69,7 @@ export async function createShopifyAdminClient(
           `https://${shop}/admin/api/${apiVersion}/graphql.json`,
           {
             method: "POST",
+            signal: AbortSignal.timeout(timeoutMs),
             headers: {
               "Content-Type": "application/json",
               "X-Shopify-Access-Token": session.accessToken,
@@ -77,7 +80,11 @@ export async function createShopifyAdminClient(
       } catch (error) {
         throw new ShopifyAdminError(
           "network_error",
-          error instanceof Error ? error.message : "Shopify network request failed",
+          error instanceof Error && error.name === "TimeoutError"
+            ? `Shopify Admin API request timed out after ${timeoutMs}ms`
+            : error instanceof Error
+              ? error.message
+              : "Shopify network request failed",
         );
       }
 

@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
+import { getBillingStatusForShop } from "./billing.ts";
 import { getAppConfig } from "./config.ts";
+import { trackGrowthEvent } from "./growthTracking.ts";
 import {
   buildOAuthStartUrl,
   handleOAuthCallback,
@@ -13,7 +15,8 @@ import {
   handleAppUninstalledWebhook,
   handleCustomersDataRequestWebhook,
   handleCustomersRedactWebhook,
-  handleShopRedactWebhook
+  handleShopRedactWebhook,
+  isWebhookAuthenticationError,
 } from "./webhooks.ts";
 
 const config = loadConfigOrExit();
@@ -54,8 +57,46 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    // Webhook routes
-    if (request.method === "POST") {
+    if (request.method === "GET" && requestUrl.pathname === "/billing/return") {
+      const shop = requestUrl.searchParams.get("shop");
+
+      if (!shop) {
+        throw new Error("Missing shop parameter");
+      }
+
+      const billing = await getBillingStatusForShop(shop, sessionStore);
+
+      if (billing.subscribed) {
+        await trackGrowthEvent(config, {
+          eventType: "SUBSCRIPTION_START",
+          source: "shopify",
+          shop,
+          metadata: {
+            trigger: "billing_return",
+            billing_status: billing.status,
+            plan: billing.planName,
+          },
+        });
+      } else if (billing.status) {
+        await trackGrowthEvent(config, {
+          eventType: "SUBSCRIPTION_CANCEL",
+          source: "shopify",
+          shop,
+          metadata: {
+            trigger: "billing_return",
+            billing_status: billing.status,
+            plan: billing.planName,
+          },
+        });
+      }
+
+      response.writeHead(302, { Location: `/?shop=${encodeURIComponent(shop)}&billing=return` });
+      response.end();
+      return;
+    }
+
+    // Webhook routes need the raw request body for HMAC verification.
+    if (request.method === "POST" && requestUrl.pathname.startsWith("/webhooks/")) {
       const rawBody = await readBody(request);
       const headers = new Headers(request.headers as HeadersInit);
       
@@ -95,9 +136,9 @@ const server = createServer(async (request, response) => {
         }
       } catch (webhookError) {
         const message = webhookError instanceof Error ? webhookError.message : "Webhook failed";
-        if (message.includes("HMAC verification failed")) {
+        if (isWebhookAuthenticationError(webhookError)) {
           response.writeHead(401, { "Content-Type": "text/plain" });
-          response.end("Unauthorized: Invalid HMAC");
+          response.end("Unauthorized");
           return;
         }
         // For other webhook errors, still return 200 to avoid Shopify retries

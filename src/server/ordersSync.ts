@@ -25,6 +25,10 @@ export type SyncOrdersResult = {
 
 type OrdersResponse = {
   orders: {
+    pageInfo?: {
+      hasNextPage: boolean;
+      endCursor: string | null;
+    };
     nodes: Array<{
       id: string;
       createdAt: string;
@@ -95,14 +99,7 @@ export async function syncOrdersAndSalesVelocityForShop(
   const calculatedFrom = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000);
   const graphqlClient =
     deps.graphqlClient || (await createShopifyAdminClient(shop, deps.sessionStore));
-  const payload = await graphqlClient.graphql<OrdersResponse>(
-    ORDERS_FOR_SALES_VELOCITY_QUERY,
-    {
-      first: 100,
-      lineItemsFirst: 100,
-      query: `created_at:>=${calculatedFrom.toISOString().slice(0, 10)}`,
-    },
-  );
+  const orders = await fetchOrdersForSalesVelocity(graphqlClient, calculatedFrom);
   const variants = await deps.prisma.variantSnapshot.findMany({ where: { shop } });
   const variantsByShopifyId = new Map(variants.map((variant) => [variant.shopifyVariantId, variant]));
   const unitsByVariant = new Map<string, number>();
@@ -112,7 +109,7 @@ export async function syncOrdersAndSalesVelocityForShop(
   let unmatchedLineItems = 0;
   let lastOrderCreatedAt: string | null = null;
 
-  for (const order of payload.orders.nodes) {
+  for (const order of orders) {
     if (order.cancelledAt) {
       skippedCount += 1;
       continue;
@@ -186,6 +183,34 @@ export async function syncOrdersAndSalesVelocityForShop(
     calculatedFrom: calculatedFrom.toISOString(),
     calculatedTo: calculatedTo.toISOString(),
   };
+}
+
+async function fetchOrdersForSalesVelocity(
+  graphqlClient: ShopifyGraphqlClient,
+  calculatedFrom: Date,
+): Promise<OrdersResponse["orders"]["nodes"]> {
+  const orders: OrdersResponse["orders"]["nodes"] = [];
+  let after: string | null = null;
+
+  while (true) {
+    const payload: OrdersResponse = await graphqlClient.graphql<OrdersResponse>(
+      ORDERS_FOR_SALES_VELOCITY_QUERY,
+      {
+        first: 100,
+        after,
+        lineItemsFirst: 100,
+        query: `created_at:>=${calculatedFrom.toISOString().slice(0, 10)}`,
+      },
+    );
+
+    orders.push(...payload.orders.nodes);
+
+    if (!payload.orders.pageInfo?.hasNextPage || !payload.orders.pageInfo.endCursor) {
+      return orders;
+    }
+
+    after = payload.orders.pageInfo.endCursor;
+  }
 }
 
 export async function listSalesVelocityForShop(

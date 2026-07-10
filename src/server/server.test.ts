@@ -33,7 +33,11 @@ import {
   upsertSupplierMapping,
 } from "./supplyChain.ts";
 import { MemoryVariantSnapshotStore } from "./variantSnapshotStore.ts";
-import { handleAppUninstalledWebhook } from "./webhooks.ts";
+import {
+  handleAppUninstalledWebhook,
+  handleCustomersDataRequestWebhook,
+  isWebhookAuthenticationError,
+} from "./webhooks.ts";
 
 const config: AppConfig = {
   apiKey: "test-key",
@@ -134,6 +138,7 @@ describe("OAuth callback", () => {
       stateStore,
       sessionStore,
       async () => "shpat_test_token",
+      async () => undefined,
     );
 
     const session = await sessionStore.load("demo-store.myshopify.com");
@@ -166,10 +171,38 @@ describe("app/uninstalled webhook", () => {
         .digest("base64"),
     });
 
-    await handleAppUninstalledWebhook(rawBody, headers, config, sessionStore);
+    await handleAppUninstalledWebhook(rawBody, headers, config, sessionStore, [], async () => undefined);
 
     const session = await sessionStore.load("demo-store.myshopify.com");
     assert.equal(session, null);
+  });
+
+  it("treats missing webhook authentication context as unauthorized", async () => {
+    const rawBody = JSON.stringify({ shop_domain: "demo-store.myshopify.com" });
+
+    await assert.rejects(
+      handleCustomersDataRequestWebhook(rawBody, new Headers(), config),
+      (error) =>
+        error instanceof Error &&
+        isWebhookAuthenticationError(error) &&
+        error.message.includes("missing shop domain"),
+    );
+  });
+
+  it("treats invalid webhook HMAC as unauthorized", async () => {
+    const rawBody = JSON.stringify({ shop_domain: "demo-store.myshopify.com" });
+    const headers = new Headers({
+      "x-shopify-shop-domain": "demo-store.myshopify.com",
+      "x-shopify-hmac-sha256": "invalid",
+    });
+
+    await assert.rejects(
+      handleCustomersDataRequestWebhook(rawBody, headers, config),
+      (error) =>
+        error instanceof Error &&
+        isWebhookAuthenticationError(error) &&
+        error.message.includes("invalid HMAC"),
+    );
   });
 });
 
@@ -1049,6 +1082,94 @@ describe("orders sync and sales velocity", () => {
     assert.equal(velocities.length, 1);
     assert.equal(velocities[0].unitsSold, 8);
     assert.equal(velocities[0].estimatedDailySales, 8 / 30);
+  });
+
+  it("paginates across multiple order pages", async () => {
+    const sessionStore = new MemorySessionStore(config.encryptionSecret);
+    const supplyChain = new MemorySupplyChainStore();
+    const adapter = supplyChain.addVariant(testVariant("variant_1", "Travel Adapter", 12));
+    let callCount = 0;
+
+    await sessionStore.save({
+      shop: "demo-store.myshopify.com",
+      accessToken: "shpat_test_token",
+      scope: "read_products,read_inventory,read_orders",
+    });
+
+    await syncOrdersAndSalesVelocityForShop("demo-store.myshopify.com", {
+      sessionStore,
+      prisma: supplyChain,
+      windowDays: 30,
+      now: new Date("2026-06-14T00:00:00.000Z"),
+      graphqlClient: {
+        shop: "demo-store.myshopify.com",
+        async graphql<TData>(_query: string, variables?: Record<string, unknown>) {
+          callCount += 1;
+
+          if (!variables?.after) {
+            return {
+              orders: {
+                nodes: [
+                  {
+                    id: "order_1",
+                    createdAt: "2026-06-13T00:00:00.000Z",
+                    cancelledAt: null,
+                    lineItems: {
+                      nodes: [
+                        {
+                          quantity: 2,
+                          variant: { id: adapter.shopifyVariantId },
+                          title: "Travel Adapter",
+                          name: "Travel Adapter",
+                        },
+                      ],
+                    },
+                  },
+                ],
+                pageInfo: {
+                  hasNextPage: true,
+                  endCursor: "cursor_1",
+                },
+              },
+            } as TData;
+          }
+
+          return {
+            orders: {
+              nodes: [
+                {
+                  id: "order_2",
+                  createdAt: "2026-06-12T00:00:00.000Z",
+                  cancelledAt: null,
+                  lineItems: {
+                    nodes: [
+                      {
+                        quantity: 4,
+                        variant: { id: adapter.shopifyVariantId },
+                        title: "Travel Adapter",
+                        name: "Travel Adapter",
+                      },
+                    ],
+                  },
+                },
+              ],
+              pageInfo: {
+                hasNextPage: false,
+                endCursor: null,
+              },
+            },
+          } as TData;
+        },
+      },
+    });
+
+    const velocities = await supplyChain.salesVelocity.findMany({
+      where: { shop: "demo-store.myshopify.com" },
+    });
+
+    assert.equal(callCount, 2);
+    assert.equal(velocities.length, 1);
+    assert.equal(velocities[0].unitsSold, 6);
   });
 
   it("rejects invalid windowDays and missing read_orders scope", async () => {

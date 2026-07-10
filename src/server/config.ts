@@ -4,6 +4,7 @@ export type AppConfig = {
   appUrl: string;
   scopes: string[];
   encryptionSecret: string;
+  growthEngineApiUrl?: string;
 };
 
 const minimumEncryptionKeyLength = 32;
@@ -38,6 +39,7 @@ export function getAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     appUrl,
     scopes,
     encryptionSecret,
+    growthEngineApiUrl: env.GROWTH_ENGINE_API_URL?.replace(/\/$/, "") || undefined,
   };
 }
 

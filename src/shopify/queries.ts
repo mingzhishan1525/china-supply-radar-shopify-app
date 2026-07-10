@@ -58,8 +58,17 @@ export const INVENTORY_LEVELS_QUERY = `#graphql
 `;
 
 export const ORDERS_FOR_SALES_VELOCITY_QUERY = `#graphql
-  query OrdersForSalesVelocity($first: Int! = 100, $query: String!, $lineItemsFirst: Int! = 100) {
-    orders(first: $first, query: $query, sortKey: CREATED_AT, reverse: true) {
+  query OrdersForSalesVelocity(
+    $first: Int! = 100
+    $after: String
+    $query: String!
+    $lineItemsFirst: Int! = 100
+  ) {
+    orders(first: $first, after: $after, query: $query, sortKey: CREATED_AT, reverse: true) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
       nodes {
         id
         createdAt

@@ -470,8 +470,8 @@ export default function App() {
   };
 
   const productInsights = useMemo(
-    () => buildProductInsights(productsState),
-    [productsState],
+    () => buildProductInsights(productsState, demoMode),
+    [demoMode, productsState],
   );
   const currentPath = typeof window === "undefined" ? "/" : window.location.pathname;
 
@@ -915,7 +915,14 @@ function Overview({
   isStartingBilling: boolean;
   onStartBilling: () => void;
 }) {
-  const summary = getDashboardSummary(productsState, productInsights, recommendations, salesVelocity, ordersSyncResult);
+  const summary = getDashboardSummary(
+    productsState,
+    productInsights,
+    recommendations,
+    salesVelocity,
+    ordersSyncResult,
+    demoMode,
+  );
   const upcomingStockouts = getUpcomingStockouts(recommendations, productsState.snapshots);
   const holidayImpact = getNextHolidayImpact(new Date());
   const readiness = getDemoReadiness({
@@ -926,8 +933,24 @@ function Overview({
     reorderQueue,
     holidayImpact,
   });
-  const decision = getInventoryDecision(summary, recommendations, reorderQueue);
-  const kpis = getDecisionKpis(summary, recommendations, salesVelocity, reorderQueue);
+  const decision = getInventoryDecision(
+    productsState,
+    summary,
+    recommendations,
+    salesVelocity,
+    reorderQueue,
+    ordersSyncResult,
+    demoMode,
+  );
+  const kpis = getDecisionKpis(
+    productsState,
+    summary,
+    recommendations,
+    salesVelocity,
+    reorderQueue,
+    ordersSyncResult,
+    demoMode,
+  );
   const skuCards = getSkuCards(productInsights, recommendations, productsState.snapshots);
 
   return (
@@ -1040,7 +1063,7 @@ function BillingButton({
   onStartBilling: () => void;
 }) {
   if (billingState.status === "ready" && billingState.billing.subscribed) {
-    return <Button disabled>Pro active</Button>;
+    return <Button disabled>Subscription active</Button>;
   }
 
   return (
@@ -1544,7 +1567,7 @@ function ProductsMappingTable({
   );
 }
 
-function buildProductInsights(productsState: ProductsState): ProductInsight[] {
+function buildProductInsights(productsState: ProductsState, demoMode: boolean): ProductInsight[] {
   if (productsState.snapshots.length) {
     return productsState.snapshots.map((snapshot) => ({
       shopifyVariantId: snapshot.shopifyVariantId,
@@ -1557,6 +1580,10 @@ function buildProductInsights(productsState: ProductsState): ProductInsight[] {
       riskLabel: "Reorder risk pending",
       riskTone: "info",
     }));
+  }
+
+  if (!demoMode) {
+    return [];
   }
 
   return sampleVariants.map((variant) => {
@@ -1598,7 +1625,29 @@ function getDashboardSummary(
   recommendations: Recommendation[],
   salesVelocity: SalesVelocity[],
   ordersSyncResult: OrdersSyncResult | null,
+  demoMode: boolean,
 ) {
+  if (!demoMode && !hasLiveOperationalData(productsState, recommendations, salesVelocity, ordersSyncResult)) {
+    return {
+      totalProducts: "0",
+      lowStockProducts: "0",
+      criticalRiskCount: "0",
+      highRiskCount: "0",
+      mediumRiskCount: "0",
+      lowRiskCount: "0",
+      productsRequiringReorder: "0",
+      earliestStockoutDays: "Pending",
+      needsSupplierMapping: "0",
+      needsSalesVelocity: "0",
+      outOfStockProducts: "0",
+      reorderRiskPending: "0",
+      latestSyncTime: "No sync yet",
+      variantsWithVelocity: "0",
+      ordersScanned: "Not synced",
+      lastVelocitySyncTime: "No order sync yet",
+    };
+  }
+
   const snapshots = productsState.snapshots;
   const latestSync = snapshots
     .map((snapshot) => snapshot.syncedAt || snapshot.updatedAt)
@@ -1693,10 +1742,34 @@ function MetricCard({
 }
 
 function getInventoryDecision(
+  productsState: ProductsState,
   summary: ReturnType<typeof getDashboardSummary>,
   recommendations: Recommendation[],
+  salesVelocity: SalesVelocity[],
   reorderQueue: ReorderQueueItem[],
+  ordersSyncResult: OrdersSyncResult | null,
+  demoMode: boolean,
 ) {
+  if (!demoMode) {
+    if (!productsState.snapshots.length) {
+      return {
+        status: "Setup required",
+        tone: "info" as const,
+        message: "Sync products and inventory to begin forecasting stock risk",
+        action: "Sync products and inventory first",
+      };
+    }
+
+    if (!ordersSyncResult && salesVelocity.length === 0) {
+      return {
+        status: "Needs order sync",
+        tone: "warning" as const,
+        message: "Sync Shopify order history to calculate sales velocity and reorder timing",
+        action: "Sync order history to generate recommendations",
+      };
+    }
+  }
+
   const urgentRecommendation = recommendations.find((item) =>
     item.riskLevel === "critical" || item.riskLevel === "out_of_stock" || item.riskLevel === "high",
   );
@@ -1736,11 +1809,32 @@ function getInventoryDecision(
 }
 
 function getDecisionKpis(
+  productsState: ProductsState,
   summary: ReturnType<typeof getDashboardSummary>,
   recommendations: Recommendation[],
   salesVelocity: SalesVelocity[],
   reorderQueue: ReorderQueueItem[],
+  ordersSyncResult: OrdersSyncResult | null,
+  demoMode: boolean,
 ) {
+  if (!demoMode) {
+    if (!productsState.snapshots.length) {
+      return [
+        { label: "Daily Sales", value: "Pending", tone: "info" as const },
+        { label: "Stock Coverage (days)", value: "Pending", tone: "info" as const },
+        { label: "Next Reorder Date", value: "Sync products first", tone: "info" as const },
+      ];
+    }
+
+    if (!ordersSyncResult && salesVelocity.length === 0) {
+      return [
+        { label: "Daily Sales", value: "Pending", tone: "info" as const },
+        { label: "Stock Coverage (days)", value: "Pending", tone: "info" as const },
+        { label: "Next Reorder Date", value: "Sync order history", tone: "warning" as const },
+      ];
+    }
+  }
+
   const averageDailySales = salesVelocity.length
     ? salesVelocity.reduce((sum, item) => sum + item.estimatedDailySales, 0) / salesVelocity.length
     : recommendations.reduce((sum, item) => sum + (item.estimatedDailySales || 0), 0) / Math.max(recommendations.length, 1);
@@ -2042,6 +2136,20 @@ function getLastVelocitySyncTime(
   const latest = ordersSyncResult?.calculatedTo || latestVelocity;
 
   return latest ? formatDateTime(latest) : "No order sync yet";
+}
+
+function hasLiveOperationalData(
+  productsState: ProductsState,
+  recommendations: Recommendation[],
+  salesVelocity: SalesVelocity[],
+  ordersSyncResult: OrdersSyncResult | null,
+) {
+  return (
+    productsState.snapshots.length > 0 ||
+    recommendations.length > 0 ||
+    salesVelocity.length > 0 ||
+    ordersSyncResult !== null
+  );
 }
 
 function formatDateTime(date: string) {
