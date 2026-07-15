@@ -316,6 +316,7 @@ export default function App() {
   const [reorderQueue, setReorderQueue] = useState<ReorderQueueItem[]>([]);
   const [ordersSyncResult, setOrdersSyncResult] = useState<OrdersSyncResult | null>(null);
   const [billingState, setBillingState] = useState<BillingState>({ status: "unknown" });
+  const [isSyncingProducts, setIsSyncingProducts] = useState(false);
   const [isSyncingOrders, setIsSyncingOrders] = useState(false);
   const [isStartingBilling, setIsStartingBilling] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
@@ -361,6 +362,52 @@ export default function App() {
       });
   };
 
+  const loadProducts = async () => {
+    if (!shop) {
+      return [];
+    }
+
+    const payload = await fetchJson<{ products: VariantSnapshot[] }>(
+      `/api/products?shop=${encodeURIComponent(shop)}`,
+    );
+
+    setProductsState({
+      status: payload.products.length ? "success" : "empty",
+      snapshots: payload.products,
+    });
+
+    return payload.products;
+  };
+
+  const syncProducts = async () => {
+    if (!shop) {
+      return;
+    }
+
+    setIsSyncingProducts(true);
+    setProductsState((current) => ({
+      status: "loading",
+      snapshots: current.snapshots,
+    }));
+
+    try {
+      await fetchJson(`/api/sync/products?shop=${encodeURIComponent(shop)}`, {
+        method: "POST",
+      });
+      await loadProducts();
+      await loadSupplyChainData();
+      setDataError(null);
+    } catch (error) {
+      setProductsState({
+        status: "error",
+        snapshots: [],
+        error: error instanceof Error ? error.message : "Unable to sync products from Shopify",
+      });
+    } finally {
+      setIsSyncingProducts(false);
+    }
+  };
+
   const syncOrders = async () => {
     if (!shop) {
       return;
@@ -398,8 +445,31 @@ export default function App() {
           return;
         }
 
+        if (payload.products.length === 0) {
+          setIsSyncingProducts(true);
+          return fetchJson(`/api/sync/products?shop=${encodeURIComponent(shop)}`, {
+            method: "POST",
+          })
+            .then(() => fetchJson<{ products: VariantSnapshot[] }>(`/api/products?shop=${encodeURIComponent(shop)}`))
+            .then((syncedPayload) => {
+              if (!isActive) {
+                return;
+              }
+
+              setProductsState({
+                status: syncedPayload.products.length ? "success" : "empty",
+                snapshots: syncedPayload.products,
+              });
+            })
+            .finally(() => {
+              if (isActive) {
+                setIsSyncingProducts(false);
+              }
+            });
+        }
+
         setProductsState({
-          status: payload.products.length ? "success" : "empty",
+          status: "success",
           snapshots: payload.products,
         });
       })
@@ -539,7 +609,11 @@ export default function App() {
       title="China Supply Radar"
       subtitle="Avoid stockouts from Chinese factory holidays. Optimize reorder timing based on real sales data and supplier lead times."
       primaryAction={<Button variant="primary" onClick={syncOrders} loading={isSyncingOrders}>Sync Order History</Button>}
-      secondaryActions={[<Button>Sync Products & Inventory</Button>]}
+      secondaryActions={[
+        <Button onClick={syncProducts} loading={isSyncingProducts}>
+          Sync Products & Inventory
+        </Button>,
+      ]}
     >
       <Tabs
         tabs={tabs}
@@ -558,9 +632,11 @@ export default function App() {
             reorderQueue={reorderQueue}
             ordersSyncResult={ordersSyncResult}
             isSyncingOrders={isSyncingOrders}
+            isSyncingProducts={isSyncingProducts}
             demoMode={demoMode}
             dataError={dataError}
             onSyncOrders={syncOrders}
+            onSyncProducts={syncProducts}
             billingState={billingState}
             isStartingBilling={isStartingBilling}
             onStartBilling={startBilling}
@@ -575,6 +651,7 @@ export default function App() {
         ) : null}
         {selectedTab === 2 ? (
           <Orders
+            products={productsState.snapshots}
             ordersSyncResult={ordersSyncResult}
             salesVelocity={salesVelocity}
             isSyncingOrders={isSyncingOrders}
@@ -588,6 +665,8 @@ export default function App() {
             products={productsState.snapshots}
             suppliers={suppliers}
             productInsights={productInsights}
+            isSyncingOrders={isSyncingOrders}
+            onSyncOrders={syncOrders}
           />
         ) : null}
         {selectedTab === 4 ? <HolidayCalendar /> : null}
@@ -893,9 +972,11 @@ function Overview({
   reorderQueue,
   ordersSyncResult,
   isSyncingOrders,
+  isSyncingProducts,
   demoMode,
   dataError,
   onSyncOrders,
+  onSyncProducts,
   billingState,
   isStartingBilling,
   onStartBilling,
@@ -908,9 +989,11 @@ function Overview({
   reorderQueue: ReorderQueueItem[];
   ordersSyncResult: OrdersSyncResult | null;
   isSyncingOrders: boolean;
+  isSyncingProducts: boolean;
   demoMode: boolean;
   dataError: string | null;
   onSyncOrders: () => void;
+  onSyncProducts: () => void;
   billingState: BillingState;
   isStartingBilling: boolean;
   onStartBilling: () => void;
@@ -956,7 +1039,11 @@ function Overview({
   return (
     <Layout>
       <Layout.Section>
-        <ProductsStateBanner productsState={productsState} />
+        <ProductsStateBanner
+          productsState={productsState}
+          loading={isSyncingProducts}
+          onSyncProducts={onSyncProducts}
+        />
       </Layout.Section>
       {dataError && (
         <Layout.Section>
@@ -1102,16 +1189,20 @@ function BillingSummary({ billingState }: { billingState: BillingState }) {
 }
 
 function Orders({
+  products,
   ordersSyncResult,
   salesVelocity,
   isSyncingOrders,
   onSyncOrders,
 }: {
+  products: VariantSnapshot[];
   ordersSyncResult: OrdersSyncResult | null;
   salesVelocity: SalesVelocity[];
   isSyncingOrders: boolean;
   onSyncOrders: () => void;
 }) {
+  const productByVariantId = new Map(products.map((product) => [product.shopifyVariantId, product]));
+
   if (!ordersSyncResult || salesVelocity.length === 0) {
     return (
       <Card>
@@ -1158,9 +1249,9 @@ function Orders({
             columnContentTypes={["text", "numeric", "numeric"]}
             headings={["Product", "Units sold (30 days)", "Estimated daily sales"]}
             rows={salesVelocity.map((velocity) => {
-              const product = sampleVariants.find(v => v.shopifyVariantId === velocity.shopifyVariantId);
+              const product = productByVariantId.get(velocity.shopifyVariantId);
               return [
-                product ? `${product.productTitle} / ${product.variantTitle}` : "Product",
+                product ? `${product.productTitle} / ${product.title}` : velocity.shopifyVariantId,
                 velocity.unitsSold,
                 velocity.estimatedDailySales.toFixed(2),
               ];
@@ -1178,12 +1269,16 @@ function Recommendations({
   products,
   suppliers,
   productInsights,
+  isSyncingOrders,
+  onSyncOrders,
 }: {
   recommendations: Recommendation[];
   reorderQueue: ReorderQueueItem[];
   products: VariantSnapshot[];
   suppliers: Supplier[];
   productInsights: ProductInsight[];
+  isSyncingOrders: boolean;
+  onSyncOrders: () => void;
 }) {
   if (recommendations.length === 0) {
     return (
@@ -1192,7 +1287,8 @@ function Recommendations({
           heading="No reorder recommendations yet"
           action={{
             content: "Sync Orders & Map Suppliers",
-            onAction: () => window.location.reload(),
+            onAction: onSyncOrders,
+            loading: isSyncingOrders,
           }}
           image={emptyStateImage}
         >
@@ -1268,32 +1364,16 @@ function Suppliers({
     onChanged();
   };
 
-  if (suppliers.length === 0) {
-    return (
-      <Card>
-        <EmptyState
-          heading="Add your first supplier to start tracking risk"
-          action={{
-            content: "Add Supplier",
-            onAction: () => {},
-          }}
-          secondaryAction={{
-            content: "Connect Alibaba / 1688",
-            onAction: () => {},
-          }}
-          image={emptyStateImage}
-        >
-          <p>Add supplier lead times to detect China holiday delays and reorder risk by SKU.</p>
-        </EmptyState>
-      </Card>
-    );
-  }
-
   return (
     <BlockStack gap="400">
       <Card>
         <BlockStack gap="300">
           <Text as="h2" variant="headingMd">Add China Supplier</Text>
+          {suppliers.length === 0 ? (
+            <Text as="p" tone="subdued">
+              Add supplier lead times to detect China holiday delays and reorder risk by SKU.
+            </Text>
+          ) : null}
           <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
             <TextField label="Name" value={draft.name} onChange={(value) => setDraft({ ...draft, name: value })} autoComplete="off" />
             <TextField label="City" value={draft.city} onChange={(value) => setDraft({ ...draft, city: value })} autoComplete="off" />
@@ -1304,6 +1384,13 @@ function Suppliers({
           <Button variant="primary" onClick={create} disabled={!shop || !draft.name.trim()}>Add supplier</Button>
         </BlockStack>
       </Card>
+      {suppliers.length === 0 ? (
+        <Card>
+          <Text as="p" tone="subdued">
+            No suppliers configured yet. Add a supplier above, then map Shopify products to supplier lead times.
+          </Text>
+        </Card>
+      ) : null}
       <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
       {suppliers.map((supplier) => (
         <Card key={supplier.id}>
@@ -1404,14 +1491,21 @@ function Settings({
   );
 }
 
-function ProductsEmptyState() {
+function ProductsEmptyState({
+  loading,
+  onSyncProducts,
+}: {
+  loading: boolean;
+  onSyncProducts: () => void;
+}) {
   return (
     <Card>
       <EmptyState
         heading="No products synced yet"
         action={{
           content: "Sync Products & Inventory",
-          onAction: () => window.location.reload(),
+          onAction: onSyncProducts,
+          loading,
         }}
         image={emptyStateImage}
       >
@@ -1421,17 +1515,30 @@ function ProductsEmptyState() {
   );
 }
 
-function ProductsStateBanner({ productsState }: { productsState: ProductsState }) {
+function ProductsStateBanner({
+  productsState,
+  loading,
+  onSyncProducts,
+}: {
+  productsState: ProductsState;
+  loading: boolean;
+  onSyncProducts: () => void;
+}) {
   if (productsState.status === "error") {
     return (
       <Banner tone="critical">
-        <p>Failed to load products: {productsState.error}</p>
+        <p>{`Failed to load Shopify products: ${productsState.error}`}</p>
+        <div style={{ marginTop: "0.75rem" }}>
+          <Button onClick={onSyncProducts} loading={loading}>
+            Retry Shopify product sync
+          </Button>
+        </div>
       </Banner>
     );
   }
 
   if (productsState.status === "empty") {
-    return <ProductsEmptyState />;
+    return <ProductsEmptyState loading={loading} onSyncProducts={onSyncProducts} />;
   }
 
   return null;
@@ -1768,6 +1875,15 @@ function getInventoryDecision(
         action: "Sync order history to generate recommendations",
       };
     }
+
+    if (recommendations.length === 0) {
+      return {
+        status: "Pending",
+        tone: "info" as const,
+        message: "Generate recommendations after syncing products, orders, and supplier lead times",
+        action: "Map suppliers and refresh recommendations",
+      };
+    }
   }
 
   const urgentRecommendation = recommendations.find((item) =>
@@ -1803,7 +1919,9 @@ function getInventoryDecision(
   return {
     status: "Healthy",
     tone: "success" as const,
-    message: `You are safe for the next ${coverageDays} days`,
+    message: demoMode
+      ? `You are safe for the next ${coverageDays} days`
+      : "No high-risk reorder action is currently calculated",
     action: "No action needed now",
   };
 }
@@ -1833,6 +1951,20 @@ function getDecisionKpis(
         { label: "Next Reorder Date", value: "Sync order history", tone: "warning" as const },
       ];
     }
+
+    if (recommendations.length === 0) {
+      return [
+        {
+          label: "Daily Sales",
+          value: salesVelocity.length
+            ? `${(salesVelocity.reduce((sum, item) => sum + item.estimatedDailySales, 0) / salesVelocity.length).toFixed(1)} units/day`
+            : "Pending",
+          tone: "info" as const,
+        },
+        { label: "Stock Coverage (days)", value: "Pending", tone: "info" as const },
+        { label: "Next Reorder Date", value: "Generate recommendations", tone: "info" as const },
+      ];
+    }
   }
 
   const averageDailySales = salesVelocity.length
@@ -1850,8 +1982,12 @@ function getDecisionKpis(
     },
     {
       label: "Stock Coverage (days)",
-      value: summary.earliestStockoutDays === "Pending" ? "300" : summary.earliestStockoutDays,
-      tone: summary.earliestStockoutDays === "Pending" ? "success" as const : "attention" as const,
+      value: summary.earliestStockoutDays === "Pending"
+        ? demoMode ? "300" : "Pending"
+        : summary.earliestStockoutDays,
+      tone: summary.earliestStockoutDays === "Pending"
+        ? demoMode ? "success" as const : "info" as const
+        : "attention" as const,
     },
     {
       label: "Next Reorder Date",
