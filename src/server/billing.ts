@@ -9,6 +9,12 @@ export const MANAGED_PRICING_ERROR = "Managed Pricing Apps cannot use the Billin
 export const APP_MANAGED_BILLING_FIX =
   "[FIX REQUIRED] Switch billing model to App-Managed Billing in Shopify Partner Dashboard";
 
+export function isShopifyBillingTestMode(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.SHOPIFY_BILLING_TEST === "1";
+}
+
 export type BillingStatus = {
   active: boolean;
   plan: "FREE" | "PRO";
@@ -179,7 +185,7 @@ export async function createProSubscriptionApprovalUrl(
   const payload = await admin.graphql<CreateSubscriptionPayload>(CREATE_SUBSCRIPTION_MUTATION, {
     name: PRO_PLAN_NAME,
     returnUrl,
-    test: process.env.SHOPIFY_BILLING_TEST === "1",
+    test: isShopifyBillingTestMode(),
     lineItems: [
       {
         plan: {
