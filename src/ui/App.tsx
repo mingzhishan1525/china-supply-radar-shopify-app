@@ -20,6 +20,7 @@ import {
   TextField,
   Banner,
 } from "@shopify/polaris";
+import { redirectToShopifyBillingApproval } from "./billingRedirect";
 import enTranslations from "@shopify/polaris/locales/en.json";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -531,7 +532,7 @@ export default function App() {
         `/api/billing/create?shop=${encodeURIComponent(shop)}`,
         { method: "POST" },
       );
-      window.location.assign(payload.confirmationUrl);
+      redirectToShopifyBillingApproval(payload.confirmationUrl);
     } catch (error) {
       setDataError(error instanceof Error ? error.message : "Unable to start Shopify Billing");
     } finally {
