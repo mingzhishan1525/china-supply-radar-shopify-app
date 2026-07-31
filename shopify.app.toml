@@ -1,7 +1,4 @@
-# Local/private Shopify CLI config.
-# Status: REQUIRES PRODUCTION CONFIG before review submission.
-# Fill client_id, application_url, and redirect_urls with real Partner Dashboard
-# values. See shopify.app.toml.example and docs/production-config-checklist.md.
+# Production Shopify CLI configuration.
 
 name = "China Supply Radar"
 client_id = "a99151fe4923be8e92663b8a7d0dba56"
@@ -13,8 +10,7 @@ scopes = "read_products,read_inventory,read_orders"
 
 [auth]
 redirect_urls = [
-  "https://app.chinasupplyradar.com/api/auth/callback",
-  "https://china-supply-radar-shopify-app-billing-staging.up.railway.app/api/auth/callback"
+  "https://app.chinasupplyradar.com/api/auth/callback"
 ]
 
 [webhooks]
