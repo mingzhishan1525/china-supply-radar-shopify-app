@@ -1,5 +1,9 @@
 # Shopify App Store Audit Simulation Report
 
+> Historical report: superseded by Monetization V1 on July 31, 2026. Its Free
+> Beta strategy is retained as decision history and is not current release
+> guidance.
+
 Last updated: June 18, 2026
 
 Status: PARTIAL. This is a pre-submission risk assessment, not evidence that Shopify review will pass.

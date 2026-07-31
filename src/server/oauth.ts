@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { verifyShopifyQueryHmac } from "../security/shopifyHmac.ts";
 import type { AppConfig } from "./config.ts";
 import { trackGrowthEvent } from "./growthTracking.ts";
+import { trackRevenueEvent } from "./revenueTracking.ts";
 import type { SessionStore } from "./sessionStore.ts";
 
 export type OAuthStateStore = {
@@ -50,6 +51,7 @@ export async function handleOAuthCallback(
   sessionStore: SessionStore,
   exchangeAccessToken = exchangeShopifyAccessToken,
   trackInstallEvent = trackGrowthEvent,
+  trackRevenueInstallEvent = trackRevenueEvent,
 ): Promise<{ shopDomain: string; redirectTo: string }> {
   const url = new URL(callbackUrl);
   const shopDomain = url.searchParams.get("shop");
@@ -84,6 +86,14 @@ export async function handleOAuthCallback(
     eventType: "INSTALL",
     source: "shopify",
     shop: shopDomain,
+    metadata: {
+      trigger: "oauth_callback",
+    },
+  });
+  await trackRevenueInstallEvent(config, {
+    eventType: "INSTALL",
+    shop: shopDomain,
+    externalId: `install:shopify:${shopDomain}`,
     metadata: {
       trigger: "oauth_callback",
     },

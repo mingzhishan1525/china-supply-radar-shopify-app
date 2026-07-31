@@ -1,8 +1,8 @@
 # Shopify App Store Pre-Submission Checklist
 
-Last updated: June 18, 2026
+Last updated: July 31, 2026
 
-Strategy: Free Beta / Free MVP. Do not implement Billing API before the first submission.
+Strategy: Free plan plus $29/month Pro through Shopify App-Managed Billing.
 
 ## Code
 
@@ -24,6 +24,8 @@ Strategy: Free Beta / Free MVP. Do not implement Billing API before the first su
 - [ ] REQUIRES PRODUCTION CONFIG: real client ID in local/private app config.
 - [ ] REQUIRES PRODUCTION CONFIG: webhook subscriptions.
 - [ ] REQUIRES PRODUCTION CONFIG: Protected Customer Data request for `read_orders`.
+- [ ] REQUIRES PRODUCTION CONFIG: select App-Managed Billing in Partner Dashboard.
+- [ ] TODO: verify a real $29 test subscription, cancellation, and Free downgrade.
 - [ ] TODO: Add review test store.
 - [ ] TODO: Add emergency developer contact.
 
@@ -38,9 +40,9 @@ Strategy: Free Beta / Free MVP. Do not implement Billing API before the first su
 
 ## Legal And Listing
 
-- [x] Free Beta pricing copy drafted.
-- [x] Terms no longer claim paid plans or automatic billing.
-- [x] Listing no longer claims paid plans or a 14-day trial.
+- [x] Free and $29 Pro pricing copy drafted.
+- [x] Terms describe Shopify Billing and cancellation downgrade.
+- [x] Listing matches the implemented Free/Pro entitlements.
 - [ ] REQUIRES PRODUCTION CONFIG: public Privacy Policy URL.
 - [ ] REQUIRES PRODUCTION CONFIG: public Terms URL.
 - [ ] TODO: app icon.
@@ -60,7 +62,7 @@ TODO: Provide Shopify review with:
 5. Steps to sync orders.
 6. Steps to add supplier lead time.
 7. Steps to view recommendations.
-8. Explanation that the app is currently Free Beta and makes no Shopify charges.
+8. Steps to approve a Shopify test charge and verify cancellation downgrade.
 9. Explanation that `read_orders` is used only for sales velocity from order line items and variant IDs.
 
 ## Final Status

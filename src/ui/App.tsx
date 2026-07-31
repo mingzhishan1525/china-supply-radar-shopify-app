@@ -206,6 +206,14 @@ type BillingStatus = {
 type BillingStatusPayload = {
   shop: string;
   billing: BillingStatus;
+  entitlements: {
+    plan: "FREE" | "PRO";
+    skuLimit: number | null;
+    supplierLimit: number | null;
+    inventoryIntelligence: boolean;
+    supplierIntelligence: boolean;
+    weeklyAlerts: boolean;
+  };
 };
 
 type BillingSubscribePayload = {
@@ -528,6 +536,10 @@ export default function App() {
 
     setIsStartingBilling(true);
     try {
+      trackCommercialEvent("upgrade_click", {
+        feature: tabs[selectedTab]?.id || "unknown",
+        plan: "FREE",
+      });
       const payload = await fetchJson<BillingSubscribePayload>(
         `/api/billing/create?shop=${encodeURIComponent(shop)}`,
         { method: "POST" },
@@ -545,6 +557,16 @@ export default function App() {
     [demoMode, productsState],
   );
   const currentPath = typeof window === "undefined" ? "/" : window.location.pathname;
+  const isPro = billingState.status === "ready" && billingState.billing.subscribed;
+
+  useEffect(() => {
+    if (!isPro && billingState.status === "ready" && [1, 2, 3].includes(selectedTab)) {
+      trackCommercialEvent("paywall_view", {
+        feature: tabs[selectedTab]?.id || "unknown",
+        plan: "FREE",
+      });
+    }
+  }, [billingState.status, isPro, selectedTab]);
 
   if (currentPath === "/landing") {
     return (
@@ -609,7 +631,9 @@ export default function App() {
     <Page
       title="China Supply Radar"
       subtitle="Avoid stockouts from Chinese factory holidays. Optimize reorder timing based on real sales data and supplier lead times."
-      primaryAction={<Button variant="primary" onClick={syncOrders} loading={isSyncingOrders}>Sync Order History</Button>}
+      primaryAction={isPro
+        ? <Button variant="primary" onClick={syncOrders} loading={isSyncingOrders}>Sync Order History</Button>
+        : <Button variant="primary" onClick={startBilling} loading={isStartingBilling}>Upgrade · $29/month</Button>}
       secondaryActions={[
         <Button onClick={syncProducts} loading={isSyncingProducts}>
           Sync Products & Inventory
@@ -643,14 +667,17 @@ export default function App() {
             onStartBilling={startBilling}
           />
         ) : null}
-        {selectedTab === 1 ? (
+        {selectedTab === 1 && isPro ? (
           <Suppliers
             shop={shop}
             suppliers={suppliers}
             onChanged={loadSupplyChainData}
           />
         ) : null}
-        {selectedTab === 2 ? (
+        {selectedTab === 1 && !isPro ? (
+          <MonetizationPaywall feature="Supplier Intelligence" onUpgrade={startBilling} loading={isStartingBilling} />
+        ) : null}
+        {selectedTab === 2 && isPro ? (
           <Orders
             products={productsState.snapshots}
             ordersSyncResult={ordersSyncResult}
@@ -659,7 +686,10 @@ export default function App() {
             onSyncOrders={syncOrders}
           />
         ) : null}
-        {selectedTab === 3 ? (
+        {selectedTab === 2 && !isPro ? (
+          <MonetizationPaywall feature="Sales Velocity & Order History" onUpgrade={startBilling} loading={isStartingBilling} />
+        ) : null}
+        {selectedTab === 3 && isPro ? (
           <Recommendations
             recommendations={recommendations}
             reorderQueue={reorderQueue}
@@ -670,9 +700,13 @@ export default function App() {
             onSyncOrders={syncOrders}
           />
         ) : null}
+        {selectedTab === 3 && !isPro ? (
+          <MonetizationPaywall feature="Inventory Risk Predictions" onUpgrade={startBilling} loading={isStartingBilling} />
+        ) : null}
         {selectedTab === 4 ? <HolidayCalendar /> : null}
         {selectedTab === 5 ? (
           <Settings
+            shop={shop}
             billingState={billingState}
             isStartingBilling={isStartingBilling}
             onStartBilling={startBilling}
@@ -1165,6 +1199,42 @@ function BillingButton({
   );
 }
 
+function MonetizationPaywall({
+  feature,
+  loading,
+  onUpgrade,
+}: {
+  feature: string;
+  loading: boolean;
+  onUpgrade: () => void;
+}) {
+  return (
+    <Layout>
+      <Layout.Section>
+        <Card>
+          <BlockStack gap="400">
+            <InlineStack align="space-between">
+              <Text as="h2" variant="headingLg">{feature}</Text>
+              <Badge tone="attention">PRO</Badge>
+            </InlineStack>
+            <Text as="p" tone="subdued">
+              Your Free plan includes one SKU and the basic risk dashboard. Upgrade to turn this preview into an actionable forecast.
+            </Text>
+            <List>
+              <List.Item>Unlimited SKU monitoring</List.Item>
+              <List.Item>Supplier reliability and risk factors</List.Item>
+              <List.Item>Sales velocity, reorder forecasts, and weekly alerts</List.Item>
+            </List>
+            <Button variant="primary" onClick={onUpgrade} loading={loading}>
+              Unlock Pro · $29/month
+            </Button>
+          </BlockStack>
+        </Card>
+      </Layout.Section>
+    </Layout>
+  );
+}
+
 function BillingSummary({ billingState }: { billingState: BillingState }) {
   if (billingState.status === "loading") {
     return <Text as="p" tone="subdued">Checking Shopify subscription status...</Text>;
@@ -1443,14 +1513,41 @@ function HolidayCalendar() {
 }
 
 function Settings({
+  shop,
   billingState,
   isStartingBilling,
   onStartBilling,
 }: {
+  shop: string | null;
   billingState: BillingState;
   isStartingBilling: boolean;
   onStartBilling: () => void;
 }) {
+  const [extensionCode, setExtensionCode] = useState("");
+  const [isGeneratingCode, setIsGeneratingCode] = useState(false);
+  const [extensionCodeError, setExtensionCodeError] = useState("");
+
+  const generateExtensionCode = async () => {
+    if (!shop) {
+      return;
+    }
+
+    setIsGeneratingCode(true);
+    setExtensionCodeError("");
+    try {
+      const payload = await fetchJson<{ code: string }>(
+        `/api/extension/link-code?shop=${encodeURIComponent(shop)}`,
+        { method: "POST" },
+      );
+      setExtensionCode(payload.code);
+      await navigator.clipboard?.writeText(payload.code);
+    } catch (error) {
+      setExtensionCodeError(error instanceof Error ? error.message : "Unable to generate connection code");
+    } finally {
+      setIsGeneratingCode(false);
+    }
+  };
+
   return (
     <Layout>
       <Layout.Section>
@@ -1485,6 +1582,36 @@ function Settings({
               loading={isStartingBilling}
               onStartBilling={onStartBilling}
             />
+          </BlockStack>
+        </Card>
+      </Layout.Section>
+      <Layout.Section>
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">Connect Chrome Extension</Text>
+            <Text as="p" tone="subdued">
+              Generate a signed connection code, then paste it into the Chrome Extension settings. The code exposes subscription status only and expires after 30 days.
+            </Text>
+            {extensionCode ? (
+              <TextField
+                label="Connection code"
+                value={extensionCode}
+                autoComplete="off"
+                readOnly
+                multiline={3}
+              />
+            ) : null}
+            {extensionCodeError ? <Banner tone="critical">{extensionCodeError}</Banner> : null}
+            <InlineStack gap="200">
+              <Button onClick={generateExtensionCode} loading={isGeneratingCode}>
+                Generate and copy code
+              </Button>
+              {extensionCode ? (
+                <Button onClick={() => void navigator.clipboard?.writeText(extensionCode)}>
+                  Copy again
+                </Button>
+              ) : null}
+            </InlineStack>
           </BlockStack>
         </Card>
       </Layout.Section>
@@ -2330,6 +2457,24 @@ async function fetchJson<TData = unknown>(url: string, init?: RequestInit): Prom
   }
 
   return response.json() as Promise<TData>;
+}
+
+function trackCommercialEvent(
+  eventName: "paywall_view" | "upgrade_click",
+  metadata: Record<string, unknown>,
+) {
+  const shop = getShopFromUrl();
+
+  if (!shop || eventName !== "paywall_view") {
+    return;
+  }
+
+  void fetchJson(`/api/paywall/view?shop=${encodeURIComponent(shop)}`, {
+    method: "POST",
+    body: JSON.stringify(metadata),
+  }).catch(() => {
+    // Commercial analytics must never interrupt the billing experience.
+  });
 }
 
 async function getShopifySessionToken(requestUrl: string): Promise<string | null> {

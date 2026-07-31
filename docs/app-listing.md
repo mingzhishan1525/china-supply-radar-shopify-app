@@ -1,14 +1,13 @@
 # Shopify App Store Listing Working Draft
 
-Status: PARTIAL. Use `docs/app-listing-final.md` as the current Free Beta MVP listing draft.
+Status: SUPERSEDED. Use `docs/app-listing-final.md` as the current Monetization V1 listing draft.
 
 ## Pricing
 
-Current pricing: Free beta.
+Current pricing: Free or Pro at $29 USD every 30 days.
 
-No charges are made through Shopify at this time.
-
-Future paid plans may be introduced later with advance notice.
+Pro subscriptions are explicitly approved and charged through Shopify Billing.
+The Free plan does not create a charge.
 
 ## Assets
 

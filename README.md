@@ -1,5 +1,31 @@
 # China Supply Radar Shopify App
 
+## Chrome Extension entitlement bridge
+
+The Shopify App settings can issue a signed, 30-day connection code for the
+Chrome Extension. The public `GET /api/extension/entitlement?code=...` endpoint
+returns only the current `FREE` or `PRO` state and expiry metadata. It does not
+return the shop domain, Shopify access token, subscription ID, or store data.
+
+Deploy the app on a host permitted by the extension, preferably
+`https://app.chinasupplyradar.com`, and configure the extension with the same
+origin using `PLASMO_PUBLIC_SHOPIFY_APP_API_URL`.
+
+## Revenue OS integration
+
+The Shopify backend pushes signed `INSTALL`, `SUBSCRIPTION`, and `CHURN` events to Revenue OS without blocking OAuth, billing, or uninstall flows when tracking is unavailable.
+
+Configure the deployment environment using the keys documented in `.env.example`:
+
+- `REVENUE_OS_API_URL`: publicly reachable Revenue OS base URL
+- `REVENUE_OS_INGEST_SECRET`: same HMAC secret as Revenue OS `REVENUE_EVENT_INGEST_SECRET`
+- `REVENUE_OS_WORKFLOW_ID`: workflow receiving the events
+- `REVENUE_OS_CAMPAIGN_ID`: active campaign, currently `us_supplier_risk_001`
+- `REVENUE_OS_ASSET_ID`: optional content-level attribution
+- `REVENUE_OS_PLAN_AMOUNT` and `REVENUE_OS_CURRENCY`: subscription value
+
+Keep the same external subscription identifier across retries; Revenue OS deduplicates events using `external_event_id`.
+
 China Supply Radar Shopify App is the primary commercial product in the
 China Supply Radar P0 product line. It helps Shopify merchants manage supplier
 mapping, order scanning, inventory coverage days, replenishment recommendations,
@@ -282,11 +308,12 @@ fake products, orders, sales velocity, recommendations, or reorder queue items.
 
 ## V1 Pre-Submission Status
 
-Current submission strategy: Free Beta / Free MVP.
+Current submission strategy: Free plan plus China Supply Radar Pro.
 
-Current pricing: Free beta.
+Current pricing: Free and Pro at $29 USD every 30 days.
 
-No charges are made through Shopify at this time. Future paid plans may be introduced later with advance notice.
+Pro charges are created and approved through Shopify Billing. Free merchants
+retain one-SKU visibility and basic risk information.
 
 Code status:
 

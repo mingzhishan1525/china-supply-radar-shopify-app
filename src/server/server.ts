@@ -4,6 +4,7 @@ import { extname, isAbsolute, join, normalize, relative, resolve } from "node:pa
 import { getBillingStatusForShop } from "./billing.ts";
 import { getAppConfig } from "./config.ts";
 import { trackGrowthEvent } from "./growthTracking.ts";
+import { trackRevenueEvent } from "./revenueTracking.ts";
 import {
   buildOAuthStartUrl,
   handleOAuthCallback,
@@ -28,6 +29,12 @@ const distDir = resolve(process.cwd(), "dist");
 const server = createServer(async (request, response) => {
   try {
     const requestUrl = new URL(request.url || "/", config.appUrl);
+
+    if (request.method === "OPTIONS" && requestUrl.pathname === "/api/extension/entitlement") {
+      response.writeHead(204, extensionCorsHeaders());
+      response.end();
+      return;
+    }
 
     if (request.method === "GET" && requestUrl.pathname === "/auth") {
       const shopDomain = requestUrl.searchParams.get("shop");
@@ -77,6 +84,18 @@ const server = createServer(async (request, response) => {
             plan: billing.planName,
           },
         });
+        await trackRevenueEvent(config, {
+          eventType: "SUBSCRIPTION",
+          shop,
+          amount: config.revenueOsPlanAmount,
+          externalId: `subscription:shopify:${billing.subscriptionId || shop}`,
+          metadata: {
+            trigger: "billing_return",
+            billing_status: billing.status,
+            plan: billing.planName,
+            subscription_id: billing.subscriptionId,
+          },
+        });
       } else if (billing.status) {
         await trackGrowthEvent(config, {
           eventType: "SUBSCRIPTION_CANCEL",
@@ -86,6 +105,17 @@ const server = createServer(async (request, response) => {
             trigger: "billing_return",
             billing_status: billing.status,
             plan: billing.planName,
+          },
+        });
+        await trackRevenueEvent(config, {
+          eventType: "CHURN",
+          shop,
+          externalId: `churn:shopify:${billing.subscriptionId || `${shop}:${billing.status}`}`,
+          metadata: {
+            trigger: "billing_return",
+            billing_status: billing.status,
+            plan: billing.planName,
+            subscription_id: billing.subscriptionId,
           },
         });
       }
@@ -161,10 +191,14 @@ const server = createServer(async (request, response) => {
           supplyChain: supplyChainStore,
           config,
           authorizationHeader: request.headers.authorization || null,
+          billingStatusResolver: (shop) => getBillingStatusForShop(shop, sessionStore),
         },
         body,
       );
-      response.writeHead(apiResponse.status, { "Content-Type": "application/json" });
+      const headers = requestUrl.pathname === "/api/extension/entitlement"
+        ? extensionCorsHeaders()
+        : { "Content-Type": "application/json" };
+      response.writeHead(apiResponse.status, headers);
       response.end(JSON.stringify(apiResponse.body));
       return;
     }
@@ -203,6 +237,16 @@ const server = createServer(async (request, response) => {
 });
 
 const port = Number(process.env.PORT || 3001);
+
+function extensionCorsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Cache-Control": "no-store",
+    "Content-Type": "application/json",
+  };
+}
 
 server.listen(port, () => {
   console.log(`Shopify App backend listening on port ${port}`);

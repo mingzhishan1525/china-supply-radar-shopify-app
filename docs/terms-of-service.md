@@ -1,6 +1,6 @@
 # Terms of Service
 
-Last updated: June 18, 2026
+Last updated: July 31, 2026
 
 ## Agreement to Terms
 
@@ -12,13 +12,16 @@ China Supply Radar helps Shopify merchants estimate inventory cover days, review
 
 The Service provides informational planning support only. You remain responsible for purchasing, inventory, supplier, legal, tax, and financial decisions.
 
-## Current Pricing
+## Plans and Billing
 
-Current pricing: Free beta.
+The Service offers a Free plan and China Supply Radar Pro at $29 USD every 30
+days. A paid subscription begins only after the merchant approves the charge
+through Shopify Billing. Shopify processes the charge; China Supply Radar does
+not receive or store payment-card credentials.
 
-No charges are made through Shopify at this time.
-
-Future paid plans may be introduced later with advance notice. If paid plans are introduced, billing will be handled through Shopify and merchants will be informed before any charges are made.
+If a Pro subscription is cancelled or becomes inactive, Pro features are
+disabled and the account returns to the Free entitlement. Pricing or plan
+changes will be disclosed before they take effect.
 
 ## Merchant Responsibilities
 

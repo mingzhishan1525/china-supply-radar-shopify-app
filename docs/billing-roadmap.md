@@ -1,15 +1,17 @@
 # Internal Billing Roadmap
 
-Status: PLANNED. Billing is not implemented and must not be represented as active in public Terms, listing copy, screenshots, or review instructions.
+Status: SUPERSEDED by Monetization V1 on July 31, 2026.
 
-Current pricing: Free beta.
+Current pricing: Free plus Pro at $29 USD every 30 days.
 
-No charges are made through Shopify at this time.
+Billing status, checkout, cancellation downgrade, server-side entitlements,
+Chrome paywalls, and the signed Chrome subscription bridge are implemented.
 
-Future paid plans may be introduced later with advance notice.
+The multi-tier pricing concepts below are retained only as historical product
+research. They are not current pricing and must not appear in public copy.
 
 ## Pricing Structure
-PLANNED internal draft only. Do not publish as current pricing.
+SUPERSEDED internal draft only. Do not publish as current pricing.
 
 ### Tier 1: Starter - $9.9/month
 **Included features:**

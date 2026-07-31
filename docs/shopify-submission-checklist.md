@@ -1,8 +1,8 @@
 # Shopify Submission Checklist - Truthful Pre-Submission Status
 
-Last updated: June 18, 2026
+Last updated: July 31, 2026
 
-Strategy: submit as Free Beta / Free MVP. Billing API is intentionally deferred.
+Strategy: submit with a Free plan and $29/month Pro using Shopify App-Managed Billing.
 
 ## A. Code Ready - PARTIAL
 
@@ -42,6 +42,7 @@ Still required:
 - Set real redirect URL.
 - Set real webhook URLs.
 - Set production environment variables.
+- Select App-Managed Billing in Shopify Partner Dashboard.
 - Generate and store a real 32+ character `SESSION_ENCRYPTION_KEY`.
 - Configure production database.
 - Apply Prisma migrations in production.
@@ -77,8 +78,8 @@ Cannot submit if:
 
 Completed:
 
-- Free Beta listing draft exists in `docs/app-listing-final.md`.
-- Pricing copy no longer claims paid plans, trial, or automatic billing.
+- Free/Pro listing draft exists in `docs/app-listing-final.md`.
+- Pricing copy matches the implemented $29 Shopify Billing subscription.
 - Support email draft is listed.
 
 Still required:
@@ -93,7 +94,7 @@ Still required:
 
 Cannot submit if:
 
-- Listing still references paid plans, free trial, or billing that is not implemented.
+- Listing pricing or entitlements differ from the implemented billing behavior.
 - Required assets are missing.
 - Public legal URLs are not live.
 

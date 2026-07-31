@@ -1,4 +1,4 @@
-# Shopify App Store Listing Draft - Free Beta MVP
+# Shopify App Store Listing Draft - Monetization V1
 
 Status: PARTIAL. This copy is ready as a draft, but the listing is not ready for submission until production URLs, assets, test instructions, and Partner Dashboard configuration are complete.
 
@@ -40,11 +40,12 @@ Best for merchants who source products from Chinese suppliers and want a practic
 
 ## Pricing
 
-Current pricing: Free beta.
+Current pricing: Free or Pro at $29 USD every 30 days.
 
-No charges are made through Shopify at this time.
-
-Future paid plans may be introduced later with advance notice.
+Pro subscriptions are approved and charged through Shopify Billing. Free
+merchants can monitor one SKU and view basic supply risk. Pro unlocks unlimited
+SKUs, supplier intelligence, inventory risk prediction, reorder forecasting,
+and weekly alerts.
 
 ## Legal Information
 
@@ -68,7 +69,8 @@ The app uses order line item quantities and variant IDs to estimate sales veloci
 
 ### Is billing enabled?
 
-No. The current launch path is Free Beta. No Shopify charges are made at this time.
+Yes. Merchants explicitly approve the $29 USD recurring Pro subscription
+through Shopify Billing. The Free plan does not create a charge.
 
 ## Demo Video Script
 
@@ -102,7 +104,7 @@ Headline: Avoid stockouts from Chinese factory holidays
 
 Subhead: Plan reorder timing from Shopify inventory, orders, and supplier lead times.
 
-CTA: Start free beta
+CTA: Start Free
 
 ## Search & Discovery
 
@@ -124,4 +126,4 @@ Review instructions must include:
 - How to install through OAuth.
 - How to sync products and orders.
 - Why `read_orders` is requested.
-- Confirmation that the app is currently Free Beta and does not charge merchants.
+- Steps to approve a Shopify test Pro charge and verify Free downgrade after cancellation.

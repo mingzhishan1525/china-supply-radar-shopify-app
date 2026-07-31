@@ -1,6 +1,7 @@
 import { verifyShopifyWebhookHmac } from "../security/shopifyHmac.ts";
 import type { AppConfig } from "./config.ts";
 import { trackGrowthEvent } from "./growthTracking.ts";
+import { trackRevenueEvent } from "./revenueTracking.ts";
 import type { SessionStore } from "./sessionStore.ts";
 
 export type ShopDataCleanupStore = {
@@ -60,6 +61,14 @@ export async function handleAppUninstalledWebhook(
     eventType: "SUBSCRIPTION_CANCEL",
     source: "shopify",
     shop: shopDomain,
+    metadata: {
+      trigger: "app_uninstalled_webhook",
+    },
+  });
+  await trackRevenueEvent(config, {
+    eventType: "CHURN",
+    shop: shopDomain,
+    externalId: `churn:shopify:${shopDomain}:app_uninstalled`,
     metadata: {
       trigger: "app_uninstalled_webhook",
     },

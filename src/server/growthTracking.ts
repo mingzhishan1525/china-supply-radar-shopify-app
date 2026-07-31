@@ -7,7 +7,10 @@ type GrowthEventType =
   | "INSTALL"
   | "ACTIVATE"
   | "SUBSCRIPTION_START"
-  | "SUBSCRIPTION_CANCEL";
+  | "SUBSCRIPTION_CANCEL"
+  | "PAYWALL_VIEW"
+  | "UPGRADE_CLICK"
+  | "CHECKOUT_START";
 
 type TrackGrowthEventPayload = {
   eventType: GrowthEventType;
@@ -29,6 +32,7 @@ export async function trackGrowthEvent(
     headers: {
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(3000),
     body: JSON.stringify({
       event_type: payload.eventType,
       source: payload.source,

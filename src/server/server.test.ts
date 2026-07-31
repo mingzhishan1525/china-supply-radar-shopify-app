@@ -22,6 +22,12 @@ import { getAppConfig, type AppConfig } from "./config.ts";
 import { handleOAuthCallback, MemoryOAuthStateStore } from "./oauth.ts";
 import { syncOrdersAndSalesVelocityForShop } from "./ordersSync.ts";
 import { syncProductsForShop } from "./productSync.ts";
+import { buildRevenueEventRequest } from "./revenueTracking.ts";
+import { entitlementsFromBilling } from "./entitlements.ts";
+import {
+  createExtensionLinkCode,
+  verifyExtensionLinkCode,
+} from "./extensionBridge.ts";
 import {
   MemorySessionStore,
   PrismaSessionStore,
@@ -45,6 +51,8 @@ const config: AppConfig = {
   appUrl: "https://app.example.com",
   scopes: ["read_products", "read_inventory"],
   encryptionSecret: "local-dev-encryption-secret",
+  revenueOsPlanAmount: 29,
+  revenueOsCurrency: "USD",
 };
 
 describe("app config", () => {
@@ -60,6 +68,8 @@ describe("app config", () => {
     assert.equal(appConfig.appUrl, "https://app.example.com");
     assert.deepEqual(appConfig.scopes, ["read_products", "read_inventory"]);
     assert.equal(appConfig.encryptionSecret.length, 32);
+    assert.equal(appConfig.revenueOsPlanAmount, 29);
+    assert.equal(appConfig.revenueOsCurrency, "USD");
   });
 
   it("throws a clear error for missing or short required env", () => {
@@ -82,6 +92,70 @@ describe("app config", () => {
           SESSION_ENCRYPTION_KEY: "too-short",
         }),
       /SESSION_ENCRYPTION_KEY must be at least 32 characters long/,
+    );
+  });
+});
+
+describe("Revenue OS tracking", () => {
+  it("builds a signed, campaign-attributed subscription event", () => {
+    const revenueConfig: AppConfig = {
+      ...config,
+      revenueOsApiUrl: "https://revenue.example.com",
+      revenueOsIngestSecret: "revenue-secret",
+      revenueOsWorkflowId: "workflow-001",
+      revenueOsCampaignId: "us_supplier_risk_001",
+      revenueOsAssetId: "asset_001",
+    };
+    const request = buildRevenueEventRequest(
+      revenueConfig,
+      {
+        eventType: "SUBSCRIPTION",
+        shop: "demo-store.myshopify.com",
+        amount: 29,
+        externalId: "subscription:shopify:gid-123",
+        metadata: { plan: "PRO" },
+      },
+      1_781_200_000,
+    );
+
+    assert.ok(request);
+    const payload = JSON.parse(request.body) as Record<string, unknown>;
+    const expectedSignature = createHmac("sha256", "revenue-secret")
+      .update(`1781200000.${request.body}`, "utf8")
+      .digest("hex");
+
+    assert.equal(payload.workflow_id, "workflow-001");
+    assert.equal(payload.campaign_id, "us_supplier_risk_001");
+    assert.equal(payload.asset_id, "asset_001");
+    assert.equal(payload.event_type, "SUBSCRIPTION");
+    assert.equal(payload.amount, 29);
+    assert.equal(request.headers["X-Revenue-Timestamp"], "1781200000");
+    assert.equal(request.headers["X-Revenue-Signature"], `v1=${expectedSignature}`);
+  });
+
+  it("builds an idempotent first-value activation event", () => {
+    const request = buildRevenueEventRequest(
+      {
+        ...config,
+        revenueOsWorkflowId: "workflow-001",
+        revenueOsCampaignId: "us_supplier_risk_001",
+      },
+      {
+        eventType: "ACTIVATE",
+        shop: "demo-store.myshopify.com",
+        externalId: "first_value:shopify:demo-store.myshopify.com:v1",
+        metadata: {
+          definition: "real_sku_recommendation_with_supplier_and_sales_velocity",
+        },
+      },
+    );
+
+    assert.ok(request);
+    const payload = JSON.parse(request.body) as Record<string, unknown>;
+    assert.equal(payload.event_type, "ACTIVATE");
+    assert.equal(
+      payload.external_event_id,
+      "first_value:shopify:demo-store.myshopify.com:v1",
     );
   });
 });
@@ -416,6 +490,124 @@ describe("Shopify Billing", () => {
         error instanceof BillingConfigurationError &&
         error.message.includes(APP_MANAGED_BILLING_FIX),
     );
+  });
+});
+
+describe("Monetization entitlements", () => {
+  it("gives Free one-SKU first value and unlocks unlimited intelligence for Pro", () => {
+    const free = entitlementsFromBilling({
+      active: false,
+      plan: "FREE",
+      subscribed: false,
+      planName: null,
+      status: null,
+      subscriptionId: null,
+      cancelAtPeriodEnd: false,
+      currentPeriodEnd: null,
+    });
+    const pro = entitlementsFromBilling({
+      active: true,
+      plan: "PRO",
+      subscribed: true,
+      planName: "China Supply Radar Pro",
+      status: "ACTIVE",
+      subscriptionId: "gid://shopify/AppSubscription/1",
+      cancelAtPeriodEnd: false,
+      currentPeriodEnd: null,
+    });
+
+    assert.equal(free.skuLimit, 1);
+    assert.equal(free.inventoryIntelligence, true);
+    assert.equal(pro.skuLimit, null);
+    assert.equal(pro.supplierIntelligence, true);
+  });
+
+  it("allows a Free shop to generate a one-SKU value preview", async () => {
+    const { sessionStore, supplyChain } = await installedApiDeps();
+    const response = await handleApiRequest(
+      "POST",
+      "/api/recommendations/generate",
+      new URLSearchParams({ shop: "demo-store.myshopify.com" }),
+      {
+        sessionStore,
+        prisma: new MemoryVariantSnapshotStore(),
+        supplyChain,
+        billingStatusResolver: async () => ({
+          active: false,
+          plan: "FREE",
+          subscribed: false,
+          planName: null,
+          status: null,
+          subscriptionId: null,
+          cancelAtPeriodEnd: false,
+          currentPeriodEnd: null,
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal((response.body as { recommendations: unknown[] }).recommendations.length <= 1, true);
+  });
+});
+
+describe("Chrome Extension subscription bridge", () => {
+  it("creates a signed code and rejects tampering or expiration", () => {
+    const code = createExtensionLinkCode(
+      "demo-store.myshopify.com",
+      config.encryptionSecret,
+      1_800_000_000,
+    );
+    const payload = verifyExtensionLinkCode(
+      code,
+      config.encryptionSecret,
+      1_800_000_100,
+    );
+
+    assert.equal(payload.shop, "demo-store.myshopify.com");
+    assert.equal(payload.exp, 1_802_592_000);
+    assert.throws(
+      () => verifyExtensionLinkCode(`${code}tampered`, config.encryptionSecret, 1_800_000_100),
+      /invalid/,
+    );
+    assert.throws(
+      () => verifyExtensionLinkCode(code, config.encryptionSecret, 1_802_592_000),
+      /expired/,
+    );
+  });
+
+  it("returns live Shopify subscription status without exposing shop data", async () => {
+    const { sessionStore, supplyChain } = await installedApiDeps();
+    const code = createExtensionLinkCode(
+      "demo-store.myshopify.com",
+      config.encryptionSecret,
+      Math.floor(Date.now() / 1000),
+    );
+    const response = await handleApiRequest(
+      "GET",
+      "/api/extension/entitlement",
+      new URLSearchParams({ code }),
+      {
+        sessionStore,
+        prisma: new MemoryVariantSnapshotStore(),
+        supplyChain,
+        config,
+        billingStatusResolver: async () => ({
+          active: true,
+          plan: "PRO",
+          subscribed: true,
+          planName: "China Supply Radar Pro",
+          status: "ACTIVE",
+          subscriptionId: "gid://shopify/AppSubscription/1",
+          cancelAtPeriodEnd: false,
+          currentPeriodEnd: null,
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal((response.body as { plan: string }).plan, "PRO");
+    assert.equal("shop" in (response.body as object), false);
+    assert.equal("subscriptionId" in (response.body as object), false);
   });
 });
 

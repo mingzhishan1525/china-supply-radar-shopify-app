@@ -5,6 +5,13 @@ export type AppConfig = {
   scopes: string[];
   encryptionSecret: string;
   growthEngineApiUrl?: string;
+  revenueOsApiUrl?: string;
+  revenueOsIngestSecret?: string;
+  revenueOsWorkflowId?: string;
+  revenueOsCampaignId?: string;
+  revenueOsAssetId?: string;
+  revenueOsPlanAmount: number;
+  revenueOsCurrency: string;
 };
 
 const minimumEncryptionKeyLength = 32;
@@ -40,7 +47,22 @@ export function getAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     scopes,
     encryptionSecret,
     growthEngineApiUrl: env.GROWTH_ENGINE_API_URL?.replace(/\/$/, "") || undefined,
+    revenueOsApiUrl: env.REVENUE_OS_API_URL?.replace(/\/$/, "") || undefined,
+    revenueOsIngestSecret: env.REVENUE_OS_INGEST_SECRET || undefined,
+    revenueOsWorkflowId: env.REVENUE_OS_WORKFLOW_ID || undefined,
+    revenueOsCampaignId: env.REVENUE_OS_CAMPAIGN_ID || undefined,
+    revenueOsAssetId: env.REVENUE_OS_ASSET_ID || undefined,
+    revenueOsPlanAmount: parseNonNegativeNumber(env.REVENUE_OS_PLAN_AMOUNT, 29),
+    revenueOsCurrency: env.REVENUE_OS_CURRENCY || "USD",
   };
+}
+
+function parseNonNegativeNumber(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function requireEnv(env: NodeJS.ProcessEnv, key: string): string {
