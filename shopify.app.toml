@@ -10,7 +10,8 @@ scopes = "read_products,read_inventory,read_orders"
 
 [auth]
 redirect_urls = [
-  "https://app.chinasupplyradar.com/api/auth/callback"
+  "https://app.chinasupplyradar.com/api/auth/callback",
+  "https://china-supply-radar-shopify-app-staging.up.railway.app/api/auth/callback"
 ]
 
 [webhooks]
