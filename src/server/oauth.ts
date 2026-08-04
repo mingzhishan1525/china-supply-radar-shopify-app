@@ -4,6 +4,7 @@ import type { AppConfig } from "./config.ts";
 import { trackGrowthEvent } from "./growthTracking.ts";
 import { trackRevenueEvent } from "./revenueTracking.ts";
 import type { SessionStore } from "./sessionStore.ts";
+import { registerAppUninstalledWebhook } from "./webhookRegistration.ts";
 
 export type ShopifyTokenSet = {
   accessToken: string;
@@ -63,6 +64,7 @@ export async function handleOAuthCallback(
   ) => Promise<ShopifyTokenSet | string> = exchangeShopifyAccessToken,
   trackInstallEvent = trackGrowthEvent,
   trackRevenueInstallEvent = trackRevenueEvent,
+  registerUninstallWebhook = registerAppUninstalledWebhook,
 ): Promise<{ shopDomain: string; redirectTo: string }> {
   const url = new URL(callbackUrl);
   const shopDomain = url.searchParams.get("shop");
@@ -95,6 +97,8 @@ export async function handleOAuthCallback(
     ...tokenSet,
     scope: config.scopes.join(","),
   });
+
+  await registerUninstallWebhook(shopDomain, config.appUrl, sessionStore);
 
   await trackInstallEvent(config, {
     eventType: "INSTALL",

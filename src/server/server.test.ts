@@ -213,6 +213,8 @@ describe("OAuth callback", () => {
       sessionStore,
       async () => "shpat_test_token",
       async () => undefined,
+      async () => undefined,
+      async () => undefined,
     );
 
     const session = await sessionStore.load("demo-store.myshopify.com");
@@ -224,6 +226,43 @@ describe("OAuth callback", () => {
     assert.equal(session.scope, "read_products,read_inventory");
     assert.equal(session.accessToken, "shpat_test_token");
     assert.notEqual(stored.accessTokenEncrypted, "shpat_test_token");
+  });
+
+  it("registers the app/uninstalled webhook after saving the session", async () => {
+    const stateStore = new MemoryOAuthStateStore();
+    const sessionStore = new MemorySessionStore(config.encryptionSecret);
+    await stateStore.put("state-webhook", "demo-store.myshopify.com");
+    const query = new URLSearchParams({
+      code: "temporary-code",
+      shop: "demo-store.myshopify.com",
+      state: "state-webhook",
+      timestamp: "1781269000",
+    });
+    query.set("hmac", signQuery(query, config.apiSecret));
+    let registered: { shop: string; appUrl: string; sessionExists: boolean } | undefined;
+
+    await handleOAuthCallback(
+      `https://app.example.com/auth/callback?${query.toString()}`,
+      config,
+      stateStore,
+      sessionStore,
+      async () => "shpat_test_token",
+      async () => undefined,
+      async () => undefined,
+      async (shop, appUrl, store) => {
+        registered = {
+          shop,
+          appUrl,
+          sessionExists: Boolean(await store.load(shop)),
+        };
+      },
+    );
+
+    assert.deepEqual(registered, {
+      shop: "demo-store.myshopify.com",
+      appUrl: config.appUrl,
+      sessionExists: true,
+    });
   });
 });
 
