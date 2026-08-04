@@ -548,14 +548,14 @@ async function requireInstalledShop(query: URLSearchParams, deps: ApiDeps) {
       throw new ApiError("invalid_session_token", "Invalid Shopify session token", 401);
     }
 
-    const offlineAccessToken = await exchangeShopifySessionTokenForOfflineAccessToken(
+    const offlineTokenSet = await exchangeShopifySessionTokenForOfflineAccessToken(
       shop,
       token,
       deps.config,
     );
     await deps.sessionStore.save({
       shop,
-      accessToken: offlineAccessToken,
+      ...offlineTokenSet,
       scope: deps.config.scopes.join(","),
     });
   } else {

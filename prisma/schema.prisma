@@ -23,6 +23,9 @@ model ShopSession {
   id                   String    @id @default(cuid())
   shop                 String    @unique
   accessTokenEncrypted String
+  refreshTokenEncrypted String?
+  accessTokenExpiresAt DateTime?
+  refreshTokenExpiresAt DateTime?
   scope                String
   isInstalled          Boolean   @default(true)
   installedAt          DateTime  @default(now())

@@ -5,6 +5,13 @@ import { trackGrowthEvent } from "./growthTracking.ts";
 import { trackRevenueEvent } from "./revenueTracking.ts";
 import type { SessionStore } from "./sessionStore.ts";
 
+export type ShopifyTokenSet = {
+  accessToken: string;
+  refreshToken?: string;
+  accessTokenExpiresAt?: string;
+  refreshTokenExpiresAt?: string;
+};
+
 export type OAuthStateStore = {
   put(state: string, shopDomain: string): Promise<void>;
   consume(state: string, shopDomain: string): Promise<boolean>;
@@ -49,7 +56,11 @@ export async function handleOAuthCallback(
   config: AppConfig,
   stateStore: OAuthStateStore,
   sessionStore: SessionStore,
-  exchangeAccessToken = exchangeShopifyAccessToken,
+  exchangeAccessToken: (
+    shopDomain: string,
+    code: string,
+    config: AppConfig,
+  ) => Promise<ShopifyTokenSet | string> = exchangeShopifyAccessToken,
   trackInstallEvent = trackGrowthEvent,
   trackRevenueInstallEvent = trackRevenueEvent,
 ): Promise<{ shopDomain: string; redirectTo: string }> {
@@ -74,11 +85,14 @@ export async function handleOAuthCallback(
     throw new Error("OAuth state verification failed");
   }
 
-  const accessToken = await exchangeAccessToken(shopDomain, code, config);
+  const exchanged = await exchangeAccessToken(shopDomain, code, config);
+  const tokenSet = typeof exchanged === "string"
+    ? { accessToken: exchanged }
+    : exchanged;
 
   await sessionStore.save({
     shop: shopDomain,
-    accessToken,
+    ...tokenSet,
     scope: config.scopes.join(","),
   });
 
@@ -109,13 +123,14 @@ export async function exchangeShopifyAccessToken(
   shopDomain: string,
   code: string,
   config: AppConfig,
-): Promise<string> {
+): Promise<ShopifyTokenSet> {
   const response = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
     },
-    body: JSON.stringify({
+    body: new URLSearchParams({
       client_id: config.apiKey,
       client_secret: config.apiSecret,
       code,
@@ -127,28 +142,23 @@ export async function exchangeShopifyAccessToken(
     throw new Error(`Shopify token exchange failed with ${response.status}`);
   }
 
-  const payload = (await response.json()) as { access_token?: string };
-
-  if (!payload.access_token) {
-    throw new Error("Shopify token exchange did not return access_token");
-  }
-
-  return payload.access_token;
+  return parseShopifyTokenResponse(await response.json());
 }
 
 export async function exchangeShopifySessionTokenForOfflineAccessToken(
   shopDomain: string,
   sessionToken: string,
   config: AppConfig,
-): Promise<string> {
+): Promise<ShopifyTokenSet> {
   assertShopDomain(shopDomain);
 
   const response = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
     },
-    body: JSON.stringify({
+    body: new URLSearchParams({
       client_id: config.apiKey,
       client_secret: config.apiSecret,
       grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -163,13 +173,63 @@ export async function exchangeShopifySessionTokenForOfflineAccessToken(
     throw new Error(`Shopify token exchange failed with ${response.status}`);
   }
 
-  const payload = (await response.json()) as { access_token?: string };
+  return parseShopifyTokenResponse(await response.json());
+}
 
-  if (!payload.access_token) {
+export async function refreshShopifyOfflineAccessToken(
+  shopDomain: string,
+  refreshToken: string,
+  config: AppConfig,
+): Promise<ShopifyTokenSet> {
+  assertShopDomain(shopDomain);
+
+  const body = new URLSearchParams({
+    client_id: config.apiKey,
+    client_secret: config.apiSecret,
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+  });
+  const response = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Shopify refresh token exchange failed with ${response.status}`);
+  }
+
+  return parseShopifyTokenResponse(await response.json());
+}
+
+function parseShopifyTokenResponse(payload: unknown): ShopifyTokenSet {
+  const token = payload as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    refresh_token_expires_in?: number;
+  };
+
+  if (!token.access_token) {
     throw new Error("Shopify token exchange did not return access_token");
   }
 
-  return payload.access_token;
+  const now = Date.now();
+  return {
+    accessToken: token.access_token,
+    refreshToken: token.refresh_token,
+    accessTokenExpiresAt: toExpiry(now, token.expires_in),
+    refreshTokenExpiresAt: toExpiry(now, token.refresh_token_expires_in),
+  };
+}
+
+function toExpiry(now: number, seconds: number | undefined): string | undefined {
+  return typeof seconds === "number" && Number.isFinite(seconds)
+    ? new Date(now + seconds * 1000).toISOString()
+    : undefined;
 }
 
 function assertShopDomain(shopDomain: string): void {

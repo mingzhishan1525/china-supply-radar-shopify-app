@@ -1,5 +1,6 @@
 import type { AppConfig } from "./config.ts";
 import { PrismaSessionStore, MemorySessionStore } from "./sessionStore.ts";
+import { refreshShopifyOfflineAccessToken } from "./oauth.ts";
 import { MemoryVariantSnapshotStore } from "./variantSnapshotStore.ts";
 import { MemorySupplyChainStore } from "./memorySupplyChainStore.ts";
 
@@ -9,7 +10,10 @@ export async function createStores(config: AppConfig) {
     const supplyChainStore = new MemorySupplyChainStore();
 
     return {
-      sessionStore: new MemorySessionStore(config.encryptionSecret),
+      sessionStore: new MemorySessionStore(
+        config.encryptionSecret,
+        (shop, refreshToken) => refreshShopifyOfflineAccessToken(shop, refreshToken, config),
+      ),
       variantStore,
       supplyChainStore,
     };
@@ -19,7 +23,11 @@ export async function createStores(config: AppConfig) {
   const prisma = new PrismaClient();
 
   return {
-    sessionStore: new PrismaSessionStore(prisma, config.encryptionSecret),
+    sessionStore: new PrismaSessionStore(
+      prisma,
+      config.encryptionSecret,
+      (shop, refreshToken) => refreshShopifyOfflineAccessToken(shop, refreshToken, config),
+    ),
     variantStore: prisma,
     supplyChainStore: prisma,
   };

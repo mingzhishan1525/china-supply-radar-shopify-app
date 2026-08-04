@@ -1,9 +1,16 @@
 import { decryptSecret, encryptSecret } from "../security/encryption.ts";
+import type { ShopifyTokenSet } from "./oauth.ts";
+
+type RefreshAccessToken = (shop: string, refreshToken: string) => Promise<ShopifyTokenSet>;
+const refreshSkewMs = 60_000;
 
 export type ShopSession = {
   id?: string;
   shop: string;
   accessToken: string;
+  refreshToken?: string;
+  accessTokenExpiresAt: string | null;
+  refreshTokenExpiresAt: string | null;
   scope: string;
   isInstalled: boolean;
   installedAt: string;
@@ -14,6 +21,9 @@ export type ShopSession = {
 export type SaveShopSessionInput = {
   shop: string;
   accessToken: string;
+  refreshToken?: string;
+  accessTokenExpiresAt?: string;
+  refreshTokenExpiresAt?: string;
   scope: string;
   installedAt?: string;
 };
@@ -30,6 +40,9 @@ type StoredShopSession = {
   id?: string;
   shop: string;
   accessTokenEncrypted: string;
+  refreshTokenEncrypted: string | null;
+  accessTokenExpiresAt: Date | string | null;
+  refreshTokenExpiresAt: Date | string | null;
   scope: string;
   isInstalled: boolean;
   installedAt: Date | string;
@@ -44,12 +57,18 @@ export type PrismaSessionClient = {
       create: {
         shop: string;
         accessTokenEncrypted: string;
+        refreshTokenEncrypted: string | null;
+        accessTokenExpiresAt: Date | null;
+        refreshTokenExpiresAt: Date | null;
         scope: string;
         isInstalled: boolean;
         installedAt: Date;
       };
       update: {
         accessTokenEncrypted: string;
+        refreshTokenEncrypted: string | null;
+        accessTokenExpiresAt: Date | null;
+        refreshTokenExpiresAt: Date | null;
         scope: string;
         isInstalled: boolean;
         uninstalledAt: null;
@@ -68,13 +87,17 @@ export type PrismaSessionClient = {
 export class PrismaSessionStore implements SessionStore {
   private readonly prisma: PrismaSessionClient;
   private readonly encryptionSecret: string;
+  private readonly refreshAccessToken?: RefreshAccessToken;
+  private readonly refreshes = new Map<string, Promise<ShopSession>>();
 
   constructor(
     prisma: PrismaSessionClient,
     encryptionSecret: string,
+    refreshAccessToken?: RefreshAccessToken,
   ) {
     this.prisma = prisma;
     this.encryptionSecret = encryptionSecret;
+    this.refreshAccessToken = refreshAccessToken;
   }
 
   async save(session: SaveShopSessionInput): Promise<ShopSession> {
@@ -86,12 +109,18 @@ export class PrismaSessionStore implements SessionStore {
       create: {
         shop: session.shop,
         accessTokenEncrypted: encryptSecret(session.accessToken, this.encryptionSecret),
+        refreshTokenEncrypted: encryptOptional(session.refreshToken, this.encryptionSecret),
+        accessTokenExpiresAt: toOptionalDate(session.accessTokenExpiresAt),
+        refreshTokenExpiresAt: toOptionalDate(session.refreshTokenExpiresAt),
         scope: session.scope,
         isInstalled: true,
         installedAt,
       },
       update: {
         accessTokenEncrypted: encryptSecret(session.accessToken, this.encryptionSecret),
+        refreshTokenEncrypted: encryptOptional(session.refreshToken, this.encryptionSecret),
+        accessTokenExpiresAt: toOptionalDate(session.accessTokenExpiresAt),
+        refreshTokenExpiresAt: toOptionalDate(session.refreshTokenExpiresAt),
         scope: session.scope,
         isInstalled: true,
         uninstalledAt: null,
@@ -106,7 +135,12 @@ export class PrismaSessionStore implements SessionStore {
       where: { shop },
     });
 
-    return stored ? this.toPlainSession(stored) : null;
+    if (!stored) {
+      return null;
+    }
+
+    const session = this.toPlainSession(stored);
+    return this.shouldRefresh(session) ? this.refresh(session) : session;
   }
 
   async delete(shop: string): Promise<void> {
@@ -136,6 +170,15 @@ export class PrismaSessionStore implements SessionStore {
       id: stored.id,
       shop: stored.shop,
       accessToken: decryptSecret(stored.accessTokenEncrypted, this.encryptionSecret),
+      refreshToken: stored.refreshTokenEncrypted
+        ? decryptSecret(stored.refreshTokenEncrypted, this.encryptionSecret)
+        : undefined,
+      accessTokenExpiresAt: stored.accessTokenExpiresAt
+        ? toIsoString(stored.accessTokenExpiresAt)
+        : null,
+      refreshTokenExpiresAt: stored.refreshTokenExpiresAt
+        ? toIsoString(stored.refreshTokenExpiresAt)
+        : null,
       scope: stored.scope,
       isInstalled: stored.isInstalled,
       installedAt: toIsoString(stored.installedAt),
@@ -143,14 +186,45 @@ export class PrismaSessionStore implements SessionStore {
       updatedAt: toIsoString(stored.updatedAt),
     };
   }
+
+  private shouldRefresh(session: ShopSession): boolean {
+    return Boolean(
+      this.refreshAccessToken
+      && session.refreshToken
+      && session.accessTokenExpiresAt
+      && Date.parse(session.accessTokenExpiresAt) <= Date.now() + refreshSkewMs,
+    );
+  }
+
+  private refresh(session: ShopSession): Promise<ShopSession> {
+    const pending = this.refreshes.get(session.shop);
+    if (pending) return pending;
+
+    const refresh = this.refreshAccessToken!(session.shop, session.refreshToken!)
+      .then((tokenSet) => this.save({
+        shop: session.shop,
+        ...tokenSet,
+        scope: session.scope,
+        installedAt: session.installedAt,
+      }))
+      .finally(() => this.refreshes.delete(session.shop));
+    this.refreshes.set(session.shop, refresh);
+    return refresh;
+  }
 }
 
 export class MemorySessionStore implements SessionStore {
   private readonly sessions = new Map<string, StoredShopSession>();
   private readonly encryptionSecret: string;
+  private readonly refreshAccessToken?: RefreshAccessToken;
+  private readonly refreshes = new Map<string, Promise<ShopSession>>();
 
-  constructor(encryptionSecret = "test-memory-session-secret") {
+  constructor(
+    encryptionSecret = "test-memory-session-secret",
+    refreshAccessToken?: RefreshAccessToken,
+  ) {
     this.encryptionSecret = encryptionSecret;
+    this.refreshAccessToken = refreshAccessToken;
   }
 
   async save(session: SaveShopSessionInput): Promise<ShopSession> {
@@ -160,6 +234,9 @@ export class MemorySessionStore implements SessionStore {
       id: previous?.id || `memory_${this.sessions.size + 1}`,
       shop: session.shop,
       accessTokenEncrypted: encryptSecret(session.accessToken, this.encryptionSecret),
+      refreshTokenEncrypted: encryptOptional(session.refreshToken, this.encryptionSecret),
+      accessTokenExpiresAt: session.accessTokenExpiresAt || null,
+      refreshTokenExpiresAt: session.refreshTokenExpiresAt || null,
       scope: session.scope,
       isInstalled: true,
       installedAt: session.installedAt || previous?.installedAt || now,
@@ -174,7 +251,9 @@ export class MemorySessionStore implements SessionStore {
   async load(shop: string): Promise<ShopSession | null> {
     const stored = this.sessions.get(shop);
 
-    return stored ? this.toPlainSession(stored) : null;
+    if (!stored) return null;
+    const session = this.toPlainSession(stored);
+    return this.shouldRefresh(session) ? this.refresh(session) : session;
   }
 
   async delete(shop: string): Promise<void> {
@@ -209,6 +288,15 @@ export class MemorySessionStore implements SessionStore {
       id: stored.id,
       shop: stored.shop,
       accessToken: decryptSecret(stored.accessTokenEncrypted, this.encryptionSecret),
+      refreshToken: stored.refreshTokenEncrypted
+        ? decryptSecret(stored.refreshTokenEncrypted, this.encryptionSecret)
+        : undefined,
+      accessTokenExpiresAt: stored.accessTokenExpiresAt
+        ? toIsoString(stored.accessTokenExpiresAt)
+        : null,
+      refreshTokenExpiresAt: stored.refreshTokenExpiresAt
+        ? toIsoString(stored.refreshTokenExpiresAt)
+        : null,
       scope: stored.scope,
       isInstalled: stored.isInstalled,
       installedAt: toIsoString(stored.installedAt),
@@ -216,8 +304,40 @@ export class MemorySessionStore implements SessionStore {
       updatedAt: toIsoString(stored.updatedAt),
     };
   }
+
+  private shouldRefresh(session: ShopSession): boolean {
+    return Boolean(
+      this.refreshAccessToken
+      && session.refreshToken
+      && session.accessTokenExpiresAt
+      && Date.parse(session.accessTokenExpiresAt) <= Date.now() + refreshSkewMs,
+    );
+  }
+
+  private refresh(session: ShopSession): Promise<ShopSession> {
+    const pending = this.refreshes.get(session.shop);
+    if (pending) return pending;
+    const refresh = this.refreshAccessToken!(session.shop, session.refreshToken!)
+      .then((tokenSet) => this.save({
+        shop: session.shop,
+        ...tokenSet,
+        scope: session.scope,
+        installedAt: session.installedAt,
+      }))
+      .finally(() => this.refreshes.delete(session.shop));
+    this.refreshes.set(session.shop, refresh);
+    return refresh;
+  }
 }
 
 function toIsoString(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function encryptOptional(value: string | undefined, encryptionSecret: string): string | null {
+  return value ? encryptSecret(value, encryptionSecret) : null;
+}
+
+function toOptionalDate(value: string | undefined): Date | null {
+  return value ? new Date(value) : null;
 }

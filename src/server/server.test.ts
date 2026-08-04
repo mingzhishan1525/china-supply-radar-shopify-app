@@ -328,6 +328,47 @@ describe("PrismaSessionStore", () => {
   });
 });
 
+describe("expiring Shopify offline tokens", () => {
+  it("encrypts refresh tokens and refreshes an expired access token once", async () => {
+    let refreshCalls = 0;
+    const sessionStore = new MemorySessionStore(
+      config.encryptionSecret,
+      async (_shop, refreshToken) => {
+        refreshCalls += 1;
+        assert.equal(refreshToken, "shprt_old_refresh");
+        await Promise.resolve();
+        return {
+          accessToken: "shpat_fresh_access",
+          refreshToken: "shprt_rotated_refresh",
+          accessTokenExpiresAt: "2099-01-01T00:00:00.000Z",
+          refreshTokenExpiresAt: "2099-03-01T00:00:00.000Z",
+        };
+      },
+    );
+
+    await sessionStore.save({
+      shop: "demo-store.myshopify.com",
+      accessToken: "shpat_expired_access",
+      refreshToken: "shprt_old_refresh",
+      accessTokenExpiresAt: "2020-01-01T00:00:00.000Z",
+      refreshTokenExpiresAt: "2099-01-01T00:00:00.000Z",
+      scope: "read_products",
+    });
+
+    const [first, second] = await Promise.all([
+      sessionStore.load("demo-store.myshopify.com"),
+      sessionStore.load("demo-store.myshopify.com"),
+    ]);
+    const raw = await sessionStore.getStoredForTest("demo-store.myshopify.com");
+
+    assert.equal(refreshCalls, 1);
+    assert.equal(first?.accessToken, "shpat_fresh_access");
+    assert.equal(second?.refreshToken, "shprt_rotated_refresh");
+    assert.ok(raw?.refreshTokenEncrypted);
+    assert.notEqual(raw.refreshTokenEncrypted, "shprt_rotated_refresh");
+  });
+});
+
 describe("Shopify GraphQL client", () => {
   it("throws shop_not_installed for missing shops", async () => {
     const sessionStore = new MemorySessionStore(config.encryptionSecret);
