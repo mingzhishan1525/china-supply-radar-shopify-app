@@ -58,8 +58,10 @@ These values are used to calculate inventory cover days and reorder recommendati
 
 - Sales velocity and recommendation data is stored per shop while the app is installed.
 - App access tokens are encrypted at rest.
-- When the app is uninstalled, the app marks the shop session as uninstalled.
-- When the Shopify `shop/redact` webhook is received, shop-specific session data is deleted.
+- When the app is uninstalled, shop sessions and all app-specific product, supplier, sales velocity, and recommendation data are deleted.
+- When the Shopify `shop/redact` webhook is received, the same shop-level deletion is performed again as a compliance safeguard.
+- Deletion is executed immediately by the application and no later than 7 days after receipt.
+- Order-derived statistics are not retained after shop-level deletion.
 - Customer PII is not stored, so customer redact and data request webhooks are no-op handlers after HMAC verification.
 
 ## Partner Dashboard Protected Customer Data Request Draft

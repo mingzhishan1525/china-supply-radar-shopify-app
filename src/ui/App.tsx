@@ -940,8 +940,10 @@ function PrivacyPolicyPage() {
       </p>
       <h2>Retention And Deletion</h2>
       <p>
-        Access tokens are encrypted at rest. When the app is uninstalled, shop session/token data and app-specific shop data are deleted.
-        Shopify GDPR webhooks are supported for customer data requests, customer redaction, and shop redaction.
+        Shopify access and refresh tokens are encrypted at the application layer using authenticated encryption. When the app is
+        uninstalled, shop session/token data and all app-specific product, supplier, sales velocity, and recommendation data are deleted.
+        A Shopify shop-redact request performs the same deletion again as a compliance safeguard. Deletion is executed immediately by
+        the application and no later than 7 days after receipt. Order-derived statistics are not retained after shop-level deletion.
       </p>
       <h2>Contact</h2>
       <p>For privacy requests, contact the app owner through the Shopify App Store listing support channel.</p>

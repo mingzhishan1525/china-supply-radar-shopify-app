@@ -38,9 +38,10 @@ We use the collected data for the following purposes:
 
 ## Data Retention
 - Shop session and access token data is retained for as long as you have the app installed
-- When you uninstall the app, we mark your session as uninstalled and retain anonymized aggregate data
-- If you request full deletion of your shop data via the Shopify SHOP_REDACT webhook, all your shop-specific data is permanently deleted within 7 days
-- Anonymized aggregate usage statistics (that cannot be linked to your specific shop) may be retained indefinitely for product improvement
+- When you uninstall the app, shop session/token data and all app-specific data linked to your shop are deleted
+- If Shopify later sends a `SHOP_REDACT` webhook, the same shop-level deletion is performed again as a compliance safeguard
+- Deletion requests are completed immediately by the application and no later than 7 days after receipt
+- We do not retain order-derived statistics after they are deleted for a shop
 
 ## Data Deletion
 You can request full deletion of your shop data at any time by:
@@ -56,7 +57,7 @@ We do not share, sell, or rent your data to any third parties, except:
 
 ## Security
 We take appropriate technical and organizational measures to protect your data against unauthorized access, use, or disclosure:
-- All access tokens are encrypted at rest
+- Shopify access and refresh tokens are encrypted at the application layer using authenticated encryption
 - All data transfers use HTTPS encryption
 - Access to production data is restricted to authorized personnel only
 

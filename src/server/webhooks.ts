@@ -112,7 +112,7 @@ export async function handleCustomersRedactWebhook(
  * GDPR Webhook: SHOP_REDACT
  * Shop owner requests deletion of all their store data
  * We delete all session and shop-specific data for this shop
- * Order statistics are anonymized and retained
+ * Order-derived statistics are deleted with the rest of the shop data
  */
 export async function handleShopRedactWebhook(
   rawBody: string,
