@@ -3,6 +3,7 @@ import { verifyShopifySessionToken } from "../security/shopifySessionToken.ts";
 import { exchangeShopifySessionTokenForOfflineAccessToken } from "./oauth.ts";
 import {
   BillingConfigurationError,
+  cancelProSubscription,
   createProSubscriptionApprovalUrl,
   getBillingStatusForShop,
 } from "./billing.ts";
@@ -186,6 +187,17 @@ export async function handleApiRequest(
             deps.config,
             deps.sessionStore,
           ),
+        },
+      };
+    }
+
+    if (method === "POST" && path === "/api/billing/cancel") {
+      const session = await requireInstalledShop(query, deps);
+      return {
+        status: 200,
+        body: {
+          shop: session.shop,
+          billing: await cancelProSubscription(session.shop, deps.sessionStore),
         },
       };
     }

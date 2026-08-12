@@ -325,6 +325,7 @@ export default function App() {
   const [reorderQueue, setReorderQueue] = useState<ReorderQueueItem[]>([]);
   const [ordersSyncResult, setOrdersSyncResult] = useState<OrdersSyncResult | null>(null);
   const [billingState, setBillingState] = useState<BillingState>({ status: "unknown" });
+  const [isCancellingBilling, setIsCancellingBilling] = useState(false);
   const [isSyncingProducts, setIsSyncingProducts] = useState(false);
   const [isSyncingOrders, setIsSyncingOrders] = useState(false);
   const [isStartingBilling, setIsStartingBilling] = useState(false);
@@ -552,6 +553,22 @@ export default function App() {
     }
   };
 
+  const cancelBilling = async () => {
+    if (!shop) return;
+    setIsCancellingBilling(true);
+    try {
+      const payload = await fetchJson<BillingStatusPayload>(
+        `/api/billing/cancel?shop=${encodeURIComponent(shop)}`,
+        { method: "POST" },
+      );
+      setBillingState({ status: "ready", billing: payload.billing });
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : "Unable to cancel Shopify Billing");
+    } finally {
+      setIsCancellingBilling(false);
+    }
+  };
+
   const productInsights = useMemo(
     () => buildProductInsights(productsState, demoMode),
     [demoMode, productsState],
@@ -672,6 +689,8 @@ export default function App() {
             billingState={billingState}
             isStartingBilling={isStartingBilling}
             onStartBilling={startBilling}
+            onCancelBilling={cancelBilling}
+            isCancellingBilling={isCancellingBilling}
           />
         ) : null}
         {selectedTab === 1 && isPro ? (
@@ -717,6 +736,8 @@ export default function App() {
             billingState={billingState}
             isStartingBilling={isStartingBilling}
             onStartBilling={startBilling}
+            onCancelBilling={cancelBilling}
+            isCancellingBilling={isCancellingBilling}
           />
         ) : null}
       </Box>
@@ -1024,6 +1045,8 @@ function Overview({
   billingState,
   isStartingBilling,
   onStartBilling,
+  onCancelBilling,
+  isCancellingBilling,
 }: {
   productInsights: ProductInsight[];
   productsState: ProductsState;
@@ -1041,6 +1064,8 @@ function Overview({
   billingState: BillingState;
   isStartingBilling: boolean;
   onStartBilling: () => void;
+  onCancelBilling: () => void;
+  isCancellingBilling: boolean;
 }) {
   const summary = getDashboardSummary(
     productsState,
@@ -1164,7 +1189,7 @@ function Overview({
             <Text as="p" tone="subdued">
               Predict inventory risk, detect China holiday delays, and identify slow-moving SKUs.
             </Text>
-            <BillingSummary billingState={billingState} />
+            <BillingSummary billingState={billingState} onCancel={onCancelBilling} cancelling={isCancellingBilling} />
             <BillingButton
               billingState={billingState}
               loading={isStartingBilling}
@@ -1237,7 +1262,7 @@ function MonetizationPaywall({
   );
 }
 
-function BillingSummary({ billingState }: { billingState: BillingState }) {
+function BillingSummary({ billingState, onCancel, cancelling }: { billingState: BillingState; onCancel: () => void; cancelling: boolean }) {
   if (billingState.status === "loading") {
     return <Text as="p" tone="subdued">Checking Shopify subscription status...</Text>;
   }
@@ -1247,7 +1272,12 @@ function BillingSummary({ billingState }: { billingState: BillingState }) {
   }
 
   if (billingState.status === "ready" && billingState.billing.subscribed) {
-    return <Text as="p" tone="success">Shopify subscription active.</Text>;
+    return (
+      <BlockStack gap="200">
+        <Text as="p" tone="success">Shopify subscription active.</Text>
+        <Button tone="critical" onClick={onCancel} loading={cancelling}>Cancel Pro subscription</Button>
+      </BlockStack>
+    );
   }
 
   if (billingState.status === "ready" && billingState.billing.status) {
@@ -1519,11 +1549,15 @@ function Settings({
   billingState,
   isStartingBilling,
   onStartBilling,
+  onCancelBilling,
+  isCancellingBilling,
 }: {
   shop: string | null;
   billingState: BillingState;
   isStartingBilling: boolean;
   onStartBilling: () => void;
+  onCancelBilling: () => void;
+  isCancellingBilling: boolean;
 }) {
   const [extensionCode, setExtensionCode] = useState("");
   const [isGeneratingCode, setIsGeneratingCode] = useState(false);
@@ -1578,7 +1612,7 @@ function Settings({
             <Text as="p" tone="subdued">
               Unlock unlimited SKUs, inventory risk prediction, China holiday delay detection, and weekly alerts.
             </Text>
-            <BillingSummary billingState={billingState} />
+            <BillingSummary billingState={billingState} onCancel={onCancelBilling} cancelling={isCancellingBilling} />
             <BillingButton
               billingState={billingState}
               loading={isStartingBilling}

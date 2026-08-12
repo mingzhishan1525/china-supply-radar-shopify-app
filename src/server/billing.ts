@@ -67,6 +67,19 @@ type CreateSubscriptionPayload = {
   };
 };
 
+type CancelSubscriptionPayload = {
+  appSubscriptionCancel: {
+    appSubscription: {
+      id: string;
+      status: string;
+    } | null;
+    userErrors: Array<{
+      field: string[] | null;
+      message: string;
+    }>;
+  };
+};
+
 type AppRecurringPricingDetails = {
   __typename: "AppRecurringPricing";
   interval: string;
@@ -128,6 +141,21 @@ const CREATE_SUBSCRIPTION_MUTATION = `#graphql
       test: $test
     ) {
       confirmationUrl
+      appSubscription {
+        id
+        status
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const CANCEL_SUBSCRIPTION_MUTATION = `#graphql
+  mutation CancelProSubscription($id: ID!) {
+    appSubscriptionCancel(id: $id, prorate: false) {
       appSubscription {
         id
         status
@@ -219,6 +247,30 @@ export async function createProSubscriptionApprovalUrl(
   }
 
   return payload.appSubscriptionCreate.confirmationUrl;
+}
+
+export async function cancelProSubscription(
+  shop: string,
+  sessionStore: SessionStore,
+  client?: ShopifyGraphqlClient,
+): Promise<BillingStatus> {
+  const admin = client || await createShopifyAdminClient(shop, sessionStore);
+  const current = await getBillingStatusForShop(shop, sessionStore, admin);
+
+  if (!current.subscriptionId || !current.subscribed) {
+    return current;
+  }
+
+  const payload = await admin.graphql<CancelSubscriptionPayload>(CANCEL_SUBSCRIPTION_MUTATION, {
+    id: current.subscriptionId,
+  });
+  const errors = payload.appSubscriptionCancel.userErrors;
+
+  if (errors.length) {
+    throw new Error(errors.map((error) => error.message).join("; "));
+  }
+
+  return getBillingStatusForShop(shop, sessionStore, admin);
 }
 
 function isProSubscription(subscription: ActiveSubscriptionsPayload["currentAppInstallation"]["activeSubscriptions"][number]) {

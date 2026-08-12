@@ -15,6 +15,7 @@ import { handleApiRequest } from "./api.ts";
 import {
   APP_MANAGED_BILLING_FIX,
   BillingConfigurationError,
+  cancelProSubscription,
   createProSubscriptionApprovalUrl,
   getBillingStatusForShop,
 } from "./billing.ts";
@@ -544,6 +545,50 @@ describe("Shopify Billing", () => {
     assert.equal(lineItems[0].plan.appRecurringPricingDetails.price.amount, 29);
     assert.equal(lineItems[0].plan.appRecurringPricingDetails.price.currencyCode, "USD");
     assert.equal(lineItems[0].plan.appRecurringPricingDetails.interval, "EVERY_30_DAYS");
+  });
+
+  it("cancels the current Pro subscription and returns Free status", async () => {
+    const sessionStore = new MemorySessionStore(config.encryptionSecret);
+    let active = true;
+    let cancelledId: unknown;
+    const client: ShopifyGraphqlClient = {
+      shop: "demo-store.myshopify.com",
+      graphql: async <TData,>(query: string, variables?: Record<string, unknown>) => {
+        if (query.includes("appSubscriptionCancel")) {
+          cancelledId = variables?.id;
+          active = false;
+          return {
+            appSubscriptionCancel: {
+              appSubscription: { id: cancelledId, status: "CANCELLED" },
+              userErrors: [],
+            },
+          } as TData;
+        }
+
+        return {
+          currentAppInstallation: {
+            activeSubscriptions: active ? [{
+              id: "gid://shopify/AppSubscription/1",
+              name: "China Supply Radar Pro",
+              status: "ACTIVE",
+              currentPeriodEnd: "2026-08-03T00:00:00Z",
+              lineItems: [{
+                plan: { pricingDetails: {
+                  __typename: "AppRecurringPricing",
+                  interval: "EVERY_30_DAYS",
+                  price: { amount: "29.0", currencyCode: "USD" },
+                } },
+              }],
+            }] : [],
+          },
+        } as TData;
+      },
+    };
+
+    const result = await cancelProSubscription("demo-store.myshopify.com", sessionStore, client);
+    assert.equal(cancelledId, "gid://shopify/AppSubscription/1");
+    assert.equal(result.plan, "FREE");
+    assert.equal(result.subscribed, false);
   });
 
   it("reports a clear blocker when Shopify Managed Pricing is enabled", async () => {
