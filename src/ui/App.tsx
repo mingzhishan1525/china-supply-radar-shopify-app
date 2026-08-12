@@ -646,6 +646,13 @@ export default function App() {
         onSelect={setSelectedTab}
         fitted
       />
+      {dataError ? (
+        <Box paddingBlockStart="400">
+          <Banner tone="critical" title="Shopify data sync failed">
+            <p>{dataError}</p>
+          </Banner>
+        </Box>
+      ) : null}
       <Box paddingBlockStart="500">
         {selectedTab === 0 ? (
           <Overview
@@ -1080,13 +1087,6 @@ function Overview({
           onSyncProducts={onSyncProducts}
         />
       </Layout.Section>
-      {dataError && (
-        <Layout.Section>
-          <Banner tone="critical">
-            <p>{dataError}</p>
-          </Banner>
-        </Layout.Section>
-      )}
       <Layout.Section>
         <Card>
           <BlockStack gap="300">

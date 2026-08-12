@@ -121,7 +121,7 @@ export async function createShopifyAdminClient(
         throw new ShopifyAdminError(
           "graphql_error",
           payload.errors.map((error) => error.message).join("; "),
-          response.status,
+          502,
         );
       }
 

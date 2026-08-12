@@ -1483,6 +1483,35 @@ describe("orders sync and sales velocity", () => {
     assert.equal((missingScope.body as { error: string }).error, "missing_read_orders_scope");
   });
 
+  it("returns a failure status when Shopify rejects protected order data", async () => {
+    const sessionStore = new MemorySessionStore(config.encryptionSecret);
+    await sessionStore.save({
+      shop: "demo-store.myshopify.com",
+      accessToken: "shpat_test_token",
+      scope: "read_products,read_inventory,read_orders",
+    });
+
+    const client = await createShopifyAdminClient(
+      "demo-store.myshopify.com",
+      sessionStore,
+      {
+        fetchImpl: async () => new Response(JSON.stringify({
+          errors: [{ message: "This app is not approved to access the Order object." }],
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      },
+    );
+
+    await assert.rejects(
+      () => client.graphql("query Orders { orders(first: 1) { nodes { id } } }"),
+      (error) => error instanceof ShopifyAdminError
+        && error.code === "graphql_error"
+        && error.status === 502,
+    );
+  });
+
   it("recommendations use real sales velocity when available", async () => {
     const supplyChain = new MemorySupplyChainStore();
     const variant = supplyChain.addVariant(testVariant("variant_1", "Travel Adapter", 12));
