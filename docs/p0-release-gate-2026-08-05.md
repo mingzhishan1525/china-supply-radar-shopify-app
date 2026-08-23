@@ -46,7 +46,7 @@ Use the staging app and a clean Shopify development store. Record a screencast a
 - [x] Legacy Railway staging root remains reachable: HTTP 200 with valid TLS.
 - [ ] Proposed staging root `https://staging-app.chinasupplyradar.com/` timed out after 20 seconds and is not deploy-ready.
 
-The production Shopify config now contains only the production OAuth callback. The staging config change remains uncommitted until the proposed staging hostname is reachable and its Shopify dashboard callback is verified. Do not deploy the uncommitted staging config.
+The production Shopify config now contains only the production OAuth callback. The staging config continues to use the reachable Railway URL; the proposed custom hostname must not be configured until it is reachable and its Shopify dashboard callback is verified.
 
 ## Required human handoff
 
