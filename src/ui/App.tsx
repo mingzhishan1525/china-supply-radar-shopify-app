@@ -665,8 +665,16 @@ export default function App() {
       />
       {dataError ? (
         <Box paddingBlockStart="400">
-          <Banner tone="critical" title="Shopify data sync failed">
+          <Banner
+            tone={isShopifyReconnectError(dataError) ? "warning" : "critical"}
+            title={isShopifyReconnectError(dataError) ? "Reconnect Shopify" : "Shopify data sync failed"}
+          >
             <p>{dataError}</p>
+            {isShopifyReconnectError(dataError) && shop ? (
+              <div style={{ marginTop: "0.75rem" }}>
+                <Button onClick={() => reconnectShopify(shop)}>Reconnect Shopify</Button>
+              </div>
+            ) : null}
           </Banner>
         </Box>
       ) : null}
@@ -1689,13 +1697,16 @@ function ProductsStateBanner({
   onSyncProducts: () => void;
 }) {
   if (productsState.status === "error") {
+    const reconnectRequired = isShopifyReconnectError(productsState.error);
     return (
-      <Banner tone="critical">
-        <p>{`Failed to load Shopify products: ${productsState.error}`}</p>
+      <Banner tone={reconnectRequired ? "warning" : "critical"}>
+        <p>{reconnectRequired ? productsState.error : `Failed to load Shopify products: ${productsState.error}`}</p>
         <div style={{ marginTop: "0.75rem" }}>
-          <Button onClick={onSyncProducts} loading={loading}>
-            Retry Shopify product sync
-          </Button>
+          {reconnectRequired && getShopFromUrl() ? (
+            <Button onClick={() => reconnectShopify(getShopFromUrl()!)}>Reconnect Shopify</Button>
+          ) : (
+            <Button onClick={onSyncProducts} loading={loading}>Retry Shopify product sync</Button>
+          )}
         </div>
       </Banner>
     );
@@ -2489,7 +2500,12 @@ async function fetchJson<TData = unknown>(url: string, init?: RequestInit): Prom
       });
     }
 
-    throw new Error(await readErrorMessage(response));
+    const error = await readApiError(response);
+    if (error.code === "unauthorized" || error.code === "shop_not_installed") {
+      throw new Error("Your Shopify authorization has expired. Reconnect the app, then try again.");
+    }
+
+    throw new Error(error.message);
   }
 
   return response.json() as Promise<TData>;
@@ -2577,15 +2593,23 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function readErrorMessage(response: Response): Promise<string> {
+async function readApiError(response: Response): Promise<{ code: string | null; message: string }> {
   const text = await response.text();
 
   try {
-    const payload = JSON.parse(text) as { message?: string };
-    return payload.message || text;
+    const payload = JSON.parse(text) as { error?: string; message?: string };
+    return { code: payload.error || null, message: payload.message || text };
   } catch {
-    return text;
+    return { code: null, message: text || `Request failed with status ${response.status}` };
   }
+}
+
+function isShopifyReconnectError(message: string): boolean {
+  return message.includes("Shopify authorization has expired");
+}
+
+function reconnectShopify(shop: string): void {
+  window.open(`/auth?shop=${encodeURIComponent(shop)}`, "_top");
 }
 
 async function updateSupplier(

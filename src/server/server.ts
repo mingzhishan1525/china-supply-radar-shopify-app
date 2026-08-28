@@ -21,7 +21,6 @@ import {
 } from "./webhooks.ts";
 
 const config = loadConfigOrExit();
-console.log("[FIX REQUIRED] Switch billing model to App-Managed Billing in Shopify Partner Dashboard");
 const stateStore = new MemoryOAuthStateStore();
 const { sessionStore, variantStore, supplyChainStore } = await createStores(config);
 const distDir = resolve(process.cwd(), "dist");

@@ -458,12 +458,10 @@ export async function handleApiRequest(
       };
     }
 
+    console.error("[API internal error]", error);
     return {
       status: 500,
-      body: errorBody(
-        "internal_error",
-        error instanceof Error ? error.message : "Request failed",
-      ),
+      body: errorBody("internal_error", "We couldn't complete this request. Please try again."),
     };
   }
 }

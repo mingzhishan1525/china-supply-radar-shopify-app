@@ -907,6 +907,46 @@ describe("API routes", () => {
     assert.equal((response.body as { products: unknown[] }).products.length, 1);
   });
 
+  it("/api/products redacts unexpected database errors", async () => {
+    const sessionStore = new MemorySessionStore(config.encryptionSecret);
+    const prisma = new MemoryVariantSnapshotStore();
+    await sessionStore.save({
+      shop: "demo-store.myshopify.com",
+      accessToken: "shpat_test_token",
+      scope: "read_products,read_inventory",
+    });
+    const originalConsoleError = console.error;
+    console.error = () => {};
+
+    try {
+      const response = await handleApiRequest(
+        "GET",
+        "/api/products",
+        new URLSearchParams({ shop: "demo-store.myshopify.com" }),
+        {
+          sessionStore,
+          prisma: {
+            variantSnapshot: {
+              ...prisma.variantSnapshot,
+              findMany: async () => {
+                throw new Error("column ShopSession.secretField does not exist");
+              },
+            },
+          },
+          supplyChain: new MemorySupplyChainStore(),
+        },
+      );
+
+      assert.equal(response.status, 500);
+      assert.deepEqual(response.body, {
+        error: "internal_error",
+        message: "We couldn't complete this request. Please try again.",
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
+
   it("/api/sync/products syncs Shopify data and returns synced count", async () => {
     const sessionStore = new MemorySessionStore(config.encryptionSecret);
     const prisma = new MemoryVariantSnapshotStore();
