@@ -652,9 +652,11 @@ export default function App() {
         ? <Button variant="primary" onClick={syncOrders} loading={isSyncingOrders}>Sync Order History</Button>
         : <Button variant="primary" onClick={startBilling} loading={isStartingBilling}>Upgrade · $29/month</Button>}
       secondaryActions={[
-        <Button onClick={syncProducts} loading={isSyncingProducts}>
-          Sync Products & Inventory
-        </Button>,
+        {
+          content: "Sync Products & Inventory",
+          onAction: syncProducts,
+          loading: isSyncingProducts,
+        },
       ]}
     >
       <Tabs
