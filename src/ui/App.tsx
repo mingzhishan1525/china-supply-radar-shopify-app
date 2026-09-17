@@ -21,6 +21,7 @@ import {
   Banner,
 } from "@shopify/polaris";
 import { redirectToShopifyBillingApproval } from "./billingRedirect";
+import { withSessionTokenRetry } from "./sessionRetry";
 import enTranslations from "@shopify/polaris/locales/en.json";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -434,6 +435,7 @@ export default function App() {
         method: "POST",
       });
       await loadSupplyChainData();
+      setDataError(null);
     } catch (error) {
       setDataError(error instanceof Error ? error.message : "Unable to sync orders");
     } finally {
@@ -2480,15 +2482,17 @@ async function fetchJson<TData = unknown>(url: string, init?: RequestInit): Prom
   const headers = new Headers(init?.headers);
   headers.set("Content-Type", "application/json");
 
-  const sessionToken = await getShopifySessionToken(url);
-
-  if (sessionToken) {
-    headers.set("Authorization", `Bearer ${sessionToken}`);
-  }
-
-  const response = await fetch(url, {
-    ...init,
-    headers,
+  const response = await withSessionTokenRetry(async () => {
+    const sessionToken = await getShopifySessionToken(url);
+    if (!sessionToken && getHostFromUrl() && !getDemoModeFromUrl()) {
+      throw new Error("Unable to verify your Shopify session. Reload the app and try again.");
+    }
+    if (sessionToken) {
+      headers.set("Authorization", `Bearer ${sessionToken}`);
+    } else {
+      headers.delete("Authorization");
+    }
+    return fetch(url, { ...init, headers });
   });
 
   if (!response.ok) {

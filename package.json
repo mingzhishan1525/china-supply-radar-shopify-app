@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "node --test --experimental-strip-types src/domain/reorder.test.ts src/server/billing.test.ts src/server/server.test.ts src/ui/billingRedirect.test.ts",
+    "test": "node --test --experimental-strip-types src/domain/reorder.test.ts src/server/billing.test.ts src/server/server.test.ts src/ui/billingRedirect.test.ts src/ui/sessionRetry.test.ts",
     "server": "node --experimental-strip-types src/server/server.ts",
     "start": "if [ \"${RUN_DB_MIGRATIONS:-0}\" = \"1\" ]; then prisma migrate deploy; fi; node --experimental-strip-types src/server/server.ts",
     "typecheck": "tsc --noEmit",
