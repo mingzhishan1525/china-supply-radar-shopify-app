@@ -11,7 +11,7 @@ import {
   ShopifyAdminError,
   type ShopifyGraphqlClient,
 } from "../shopify/adminClient.ts";
-import { handleApiRequest } from "./api.ts";
+import { handleApiRequest as rawHandleApiRequest, type ApiDeps } from "./api.ts";
 import {
   APP_MANAGED_BILLING_FIX,
   BillingConfigurationError,
@@ -55,6 +55,23 @@ const config: AppConfig = {
   revenueOsPlanAmount: 29,
   revenueOsCurrency: "USD",
 };
+
+// API behavior tests use a real, signed embedded-session fixture. Authentication
+// rejection/bootstrap cases are exercised separately against the raw handler.
+async function handleApiRequest(method: string, path: string, query: URLSearchParams, deps: ApiDeps, body: unknown = {}) {
+  const shop = query.get("shop") || "demo-store.myshopify.com";
+  const authConfig = deps.config || config;
+  const now = Math.floor(Date.now() / 1000);
+  const head = Buffer.from(JSON.stringify({ alg: "HS256" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ aud: authConfig.apiKey, dest: `https://${shop}`, iss: `https://${shop}/admin`, nbf: now - 1, exp: now + 60 })).toString("base64url");
+  const signature = createHmac("sha256", authConfig.apiSecret).update(`${head}.${payload}`).digest("base64url");
+  return rawHandleApiRequest(method, path, query, {
+    config: authConfig,
+    authorizationHeader: `Bearer ${head}.${payload}.${signature}`,
+    billingStatusResolver: async () => ({ active: true, plan: "PRO", subscribed: true, planName: "China Supply Radar Pro", status: "ACTIVE", subscriptionId: "test-entitlement", cancelAtPeriodEnd: false, currentPeriodEnd: null }),
+    ...deps,
+  }, body);
+}
 
 describe("app config", () => {
   it("reads Shopify env and validates the session encryption key", () => {
@@ -221,7 +238,7 @@ describe("OAuth callback", () => {
     const session = await sessionStore.load("demo-store.myshopify.com");
     const stored = await sessionStore.getStoredForTest("demo-store.myshopify.com");
 
-    assert.equal(result.redirectTo, "/?shop=demo-store.myshopify.com");
+    assert.equal(result.redirectTo, "https://demo-store.myshopify.com/admin/apps/test-key");
     assert.ok(session);
     assert.ok(stored);
     assert.equal(session.scope, "read_products,read_inventory");
@@ -509,6 +526,7 @@ describe("Shopify Billing", () => {
     const client: ShopifyGraphqlClient = {
       shop: "demo-store.myshopify.com",
       graphql: async <TData,>(_query: string, nextVariables?: Record<string, unknown>) => {
+        if (_query.includes("BillingShopPlan")) return { shop: { plan: { partnerDevelopment: false } } } as TData;
         variables = nextVariables;
 
         return {
@@ -595,7 +613,7 @@ describe("Shopify Billing", () => {
     const sessionStore = new MemorySessionStore(config.encryptionSecret);
     const client: ShopifyGraphqlClient = {
       shop: "demo-store.myshopify.com",
-      graphql: async <TData,>() => ({
+      graphql: async <TData,>(query: string) => (query.includes("BillingShopPlan") ? { shop: { plan: { partnerDevelopment: false } } } : {
         appSubscriptionCreate: {
           confirmationUrl: null,
           appSubscription: null,
@@ -839,12 +857,13 @@ describe("API routes", () => {
     });
   });
 
-  it("/api/products rejects uninstalled shops", async () => {
+  it("/api/products rejects requests without an authenticated session", async () => {
     const response = await handleApiRequest(
       "GET",
       "/api/products",
       new URLSearchParams({ shop: "demo-store.myshopify.com" }),
       {
+        authorizationHeader: null,
         sessionStore: new MemorySessionStore(config.encryptionSecret),
         prisma: new MemoryVariantSnapshotStore(),
         supplyChain: new MemorySupplyChainStore(),
@@ -853,8 +872,8 @@ describe("API routes", () => {
 
     assert.equal(response.status, 401);
     assert.deepEqual(response.body, {
-      error: "shop_not_installed",
-      message: "Shop is not installed",
+      error: "invalid_session_token",
+      message: "Your Shopify session needs to be renewed. Reload the app and try again.",
     });
   });
 
@@ -1243,12 +1262,13 @@ describe("recommendations", () => {
     );
   });
 
-  it("rejects recommendations API for uninstalled shops", async () => {
+  it("rejects unauthenticated recommendations API requests", async () => {
     const response = await handleApiRequest(
       "POST",
       "/api/recommendations/generate",
       new URLSearchParams({ shop: "demo-store.myshopify.com" }),
       {
+        authorizationHeader: null,
         sessionStore: new MemorySessionStore(config.encryptionSecret),
         prisma: new MemoryVariantSnapshotStore(),
         supplyChain: new MemorySupplyChainStore(),
@@ -1425,7 +1445,7 @@ describe("orders sync and sales velocity", () => {
     assert.deepEqual(result, {
       ordersScanned: 2,
       lineItemsScanned: 4,
-      variantsUpdated: 1,
+      variantsUpdated: 2,
       matchedVariants: 1,
       unmatchedLineItems: 2,
       skippedCount: 3,
@@ -1436,7 +1456,8 @@ describe("orders sync and sales velocity", () => {
       calculatedFrom: "2026-05-15T00:00:00.000Z",
       calculatedTo: "2026-06-14T00:00:00.000Z",
     });
-    assert.equal(velocities.length, 1);
+    assert.equal(velocities.length, 2);
+    assert.equal(velocities[1].unitsSold, 0);
     assert.equal(velocities[0].unitsSold, 8);
     assert.equal(velocities[0].estimatedDailySales, 8 / 30);
   });

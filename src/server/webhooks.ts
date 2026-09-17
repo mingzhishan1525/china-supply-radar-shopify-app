@@ -1,3 +1,4 @@
+import { withShopLifecycle } from "./shopLifecycle.ts";
 import { verifyShopifyWebhookHmac } from "../security/shopifyHmac.ts";
 import type { AppConfig } from "./config.ts";
 import { trackGrowthEvent } from "./growthTracking.ts";
@@ -53,27 +54,36 @@ export async function handleAppUninstalledWebhook(
   sessionStore: SessionStore,
   cleanupStores: ShopDataCleanupStore[] = [],
   trackEvent = trackGrowthEvent,
+  trackRevenue = trackRevenueEvent,
 ): Promise<void> {
   const shopDomain = getAuthenticatedShopDomain(rawBody, headers, config.apiSecret);
 
+  const cleaned = await withShopLifecycle(sessionStore, shopDomain, async () => {
+    const session = sessionStore.peek ? await sessionStore.peek(shopDomain) : null;
+    const triggeredAt = headers.get("x-shopify-triggered-at");
+    // A delayed delivery from the previous installation must not erase the new one.
+    if (session && triggeredAt && Date.parse(triggeredAt) < Date.parse(session.installedAt)) return false;
+    await deleteShopDataForShop(shopDomain, sessionStore, cleanupStores);
+    return true;
+  });
+  if (!cleaned) return;
   console.log(`[SECURITY] App uninstalled for shop: ${shopDomain}`);
-  await trackEvent(config, {
+  // Analytics is best-effort; it must never delay cleanup or webhook acknowledgement.
+  void Promise.allSettled([trackEvent(config, {
     eventType: "SUBSCRIPTION_CANCEL",
     source: "shopify",
     shop: shopDomain,
     metadata: {
       trigger: "app_uninstalled_webhook",
     },
-  });
-  await trackRevenueEvent(config, {
+  }), trackRevenue(config, {
     eventType: "CHURN",
     shop: shopDomain,
     externalId: `churn:shopify:${shopDomain}:app_uninstalled`,
     metadata: {
       trigger: "app_uninstalled_webhook",
     },
-  });
-  await deleteShopDataForShop(shopDomain, sessionStore, cleanupStores);
+  })]);
 }
 
 /**

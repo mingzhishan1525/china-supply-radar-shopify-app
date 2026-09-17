@@ -1,10 +1,9 @@
+import { embeddedAppUrl } from "./billingReturn.ts";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { getBillingStatusForShop } from "./billing.ts";
 import { getAppConfig } from "./config.ts";
-import { trackGrowthEvent } from "./growthTracking.ts";
-import { trackRevenueEvent } from "./revenueTracking.ts";
 import {
   buildOAuthStartUrl,
   handleOAuthCallback,
@@ -70,56 +69,10 @@ const server = createServer(async (request, response) => {
         throw new Error("Missing shop parameter");
       }
 
-      const billing = await getBillingStatusForShop(shop, sessionStore);
-
-      if (billing.subscribed) {
-        await trackGrowthEvent(config, {
-          eventType: "SUBSCRIPTION_START",
-          source: "shopify",
-          shop,
-          metadata: {
-            trigger: "billing_return",
-            billing_status: billing.status,
-            plan: billing.planName,
-          },
-        });
-        await trackRevenueEvent(config, {
-          eventType: "SUBSCRIPTION",
-          shop,
-          amount: config.revenueOsPlanAmount,
-          externalId: `subscription:shopify:${billing.subscriptionId || shop}`,
-          metadata: {
-            trigger: "billing_return",
-            billing_status: billing.status,
-            plan: billing.planName,
-            subscription_id: billing.subscriptionId,
-          },
-        });
-      } else if (billing.status) {
-        await trackGrowthEvent(config, {
-          eventType: "SUBSCRIPTION_CANCEL",
-          source: "shopify",
-          shop,
-          metadata: {
-            trigger: "billing_return",
-            billing_status: billing.status,
-            plan: billing.planName,
-          },
-        });
-        await trackRevenueEvent(config, {
-          eventType: "CHURN",
-          shop,
-          externalId: `churn:shopify:${billing.subscriptionId || `${shop}:${billing.status}`}`,
-          metadata: {
-            trigger: "billing_return",
-            billing_status: billing.status,
-            plan: billing.planName,
-            subscription_id: billing.subscriptionId,
-          },
-        });
-      }
-
-      response.writeHead(302, { Location: `/?shop=${encodeURIComponent(shop)}&billing=return` });
+      // Re-enter Shopify so App Bridge gets a fresh host and session token.
+      // Billing status is verified by the authenticated API after this redirect;
+      // the return URL itself never grants entitlements or accepts charge_id.
+      response.writeHead(302, { Location: embeddedAppUrl(shop, config) });
       response.end();
       return;
     }
@@ -170,10 +123,10 @@ const server = createServer(async (request, response) => {
           response.end("Unauthorized");
           return;
         }
-        // For other webhook errors, still return 200 to avoid Shopify retries
+        // Failed cleanup must be retried by Shopify; never acknowledge data loss.
         console.error(`[WEBHOOK_ERROR] ${message}`, webhookError);
-        response.writeHead(200);
-        response.end("ok");
+        response.writeHead(503);
+        response.end("Retry webhook delivery");
         return;
       }
     }
@@ -190,7 +143,7 @@ const server = createServer(async (request, response) => {
           supplyChain: supplyChainStore,
           config,
           authorizationHeader: request.headers.authorization || null,
-          billingStatusResolver: (shop) => getBillingStatusForShop(shop, sessionStore),
+          billingStatusResolver: (shop, authenticatedStore) => getBillingStatusForShop(shop, authenticatedStore),
         },
         body,
       );

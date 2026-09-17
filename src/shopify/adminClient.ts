@@ -1,3 +1,4 @@
+import { ShopifyTokenError } from "../server/tokenErrors.ts";
 import type { SessionStore } from "../server/sessionStore.ts";
 
 export type ShopifyGraphqlClient = {
@@ -42,7 +43,7 @@ export async function createShopifyAdminClient(
   sessionStore: SessionStore,
   options: ShopifyAdminClientOptions = {},
 ): Promise<ShopifyGraphqlClient> {
-  const session = await sessionStore.load(shop);
+  let session = await sessionStore.load(shop);
 
   if (!session || !session.isInstalled) {
     throw new ShopifyAdminError(
@@ -65,19 +66,25 @@ export async function createShopifyAdminClient(
       let response: Response;
 
       try {
-        response = await fetchImpl(
+        const send = () => fetchImpl(
           `https://${shop}/admin/api/${apiVersion}/graphql.json`,
           {
             method: "POST",
             signal: AbortSignal.timeout(timeoutMs),
             headers: {
               "Content-Type": "application/json",
-              "X-Shopify-Access-Token": session.accessToken,
+              "X-Shopify-Access-Token": session!.accessToken,
             },
             body: JSON.stringify({ query, variables }),
           },
         );
+        response = await send();
+        if (response.status === 401 && sessionStore.reauthorize) {
+          session = await sessionStore.reauthorize(shop);
+          response = await send();
+        }
       } catch (error) {
+        if (error instanceof ShopifyTokenError) throw error;
         throw new ShopifyAdminError(
           "network_error",
           error instanceof Error && error.name === "TimeoutError"

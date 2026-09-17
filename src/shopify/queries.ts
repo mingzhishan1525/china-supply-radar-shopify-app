@@ -18,13 +18,15 @@ export const PRODUCTS_QUERY = `#graphql
 `;
 
 export const PRODUCTS_FOR_SYNC_QUERY = `#graphql
-  query ProductsForSync($first: Int! = 50, $variantsFirst: Int! = 50) {
-    products(first: $first) {
+  query ProductsForSync($first: Int! = 50, $variantsFirst: Int! = 50, $after: String) {
+    products(first: $first, after: $after) {
+      pageInfo { hasNextPage endCursor }
       nodes {
         id
         title
         updatedAt
         variants(first: $variantsFirst) {
+          pageInfo { hasNextPage endCursor }
           nodes {
             id
             title
@@ -74,6 +76,7 @@ export const ORDERS_FOR_SALES_VELOCITY_QUERY = `#graphql
         createdAt
         cancelledAt
         lineItems(first: $lineItemsFirst) {
+          pageInfo { hasNextPage endCursor }
           nodes {
             quantity
             variant {
@@ -83,6 +86,27 @@ export const ORDERS_FOR_SALES_VELOCITY_QUERY = `#graphql
             name
           }
         }
+      }
+    }
+  }
+`;
+
+export const PRODUCT_VARIANTS_PAGE_QUERY = `#graphql
+  query ProductVariantsPage($id: ID!, $after: String!) {
+    product(id: $id) {
+      variants(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes { id title sku price inventoryQuantity updatedAt }
+      }
+    }
+  }
+`;
+export const ORDER_LINE_ITEMS_PAGE_QUERY = `#graphql
+  query OrderLineItemsPage($id: ID!, $after: String!) {
+    order(id: $id) {
+      lineItems(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes { quantity variant { id } title name }
       }
     }
   }

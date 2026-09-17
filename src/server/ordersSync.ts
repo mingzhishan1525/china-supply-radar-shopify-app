@@ -2,7 +2,8 @@ import {
   createShopifyAdminClient,
   type ShopifyGraphqlClient,
 } from "../shopify/adminClient.ts";
-import { ORDERS_FOR_SALES_VELOCITY_QUERY } from "../shopify/queries.ts";
+import { nextCursor, type PageInfo } from "../shopify/pagination.ts";
+import { ORDERS_FOR_SALES_VELOCITY_QUERY, ORDER_LINE_ITEMS_PAGE_QUERY } from "../shopify/queries.ts";
 import type { SessionStore } from "./sessionStore.ts";
 import type { SupplyChainClient } from "./supplyChain.ts";
 
@@ -34,6 +35,7 @@ type OrdersResponse = {
       createdAt: string;
       cancelledAt: string | null;
       lineItems: {
+        pageInfo?: PageInfo;
         nodes: Array<{
           quantity: number;
           variant: { id: string } | null;
@@ -94,12 +96,16 @@ export async function syncOrdersAndSalesVelocityForShop(
     );
   }
 
+  if (windowDays > 60 && !session.scope.split(",").map(s => s.trim()).includes("read_all_orders")) {
+    throw new OrdersSyncError("missing_read_all_orders_scope", "Windows longer than 60 days require read_all_orders access. Choose a shorter window.", 403);
+  }
+
   const now = syncStartedAt;
   const calculatedTo = now;
   const calculatedFrom = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000);
   const graphqlClient =
     deps.graphqlClient || (await createShopifyAdminClient(shop, deps.sessionStore));
-  const orders = await fetchOrdersForSalesVelocity(graphqlClient, calculatedFrom);
+  const orders = await fetchOrdersForSalesVelocity(graphqlClient, calculatedFrom, calculatedTo);
   const variants = await deps.prisma.variantSnapshot.findMany({ where: { shop } });
   const variantsByShopifyId = new Map(variants.map((variant) => [variant.shopifyVariantId, variant]));
   const unitsByVariant = new Map<string, number>();
@@ -110,7 +116,7 @@ export async function syncOrdersAndSalesVelocityForShop(
   let lastOrderCreatedAt: string | null = null;
 
   for (const order of orders) {
-    if (order.cancelledAt) {
+    if (order.cancelledAt || Date.parse(order.createdAt) < calculatedFrom.getTime() || Date.parse(order.createdAt) > calculatedTo.getTime()) {
       skippedCount += 1;
       continue;
     }
@@ -133,8 +139,9 @@ export async function syncOrdersAndSalesVelocityForShop(
     }
   }
 
-  for (const [shopifyVariantId, unitsSold] of unitsByVariant) {
-    const snapshot = variantsByShopifyId.get(shopifyVariantId);
+  let variantsUpdated = 0;
+  for (const [shopifyVariantId, snapshot] of variantsByShopifyId) {
+    const unitsSold = unitsByVariant.get(shopifyVariantId) || 0;
 
     if (!snapshot?.id) {
       skippedCount += 1;
@@ -167,12 +174,13 @@ export async function syncOrdersAndSalesVelocityForShop(
         calculatedTo,
       },
     });
+    variantsUpdated += 1;
   }
 
   return {
     ordersScanned,
     lineItemsScanned,
-    variantsUpdated: unitsByVariant.size,
+    variantsUpdated,
     matchedVariants: unitsByVariant.size,
     unmatchedLineItems,
     skippedCount,
@@ -188,9 +196,11 @@ export async function syncOrdersAndSalesVelocityForShop(
 async function fetchOrdersForSalesVelocity(
   graphqlClient: ShopifyGraphqlClient,
   calculatedFrom: Date,
+  calculatedTo: Date,
 ): Promise<OrdersResponse["orders"]["nodes"]> {
   const orders: OrdersResponse["orders"]["nodes"] = [];
   let after: string | null = null;
+  const cursors = new Set<string>();
 
   while (true) {
     const payload: OrdersResponse = await graphqlClient.graphql<OrdersResponse>(
@@ -199,17 +209,24 @@ async function fetchOrdersForSalesVelocity(
         first: 100,
         after,
         lineItemsFirst: 100,
-        query: `created_at:>=${calculatedFrom.toISOString().slice(0, 10)}`,
+        query: `created_at:>=${calculatedFrom.toISOString()} created_at:<=${calculatedTo.toISOString()}`,
       },
     );
 
-    orders.push(...payload.orders.nodes);
-
-    if (!payload.orders.pageInfo?.hasNextPage || !payload.orders.pageInfo.endCursor) {
-      return orders;
+    for (const order of payload.orders.nodes) {
+      if (order.cancelledAt) continue;
+      const lineCursors = new Set<string>();
+      let lineAfter = nextCursor(order.lineItems.pageInfo, lineCursors);
+      while (lineAfter) {
+        const more = await graphqlClient.graphql<{ order: { lineItems: typeof order.lineItems } | null }>(ORDER_LINE_ITEMS_PAGE_QUERY, { id: order.id, after: lineAfter });
+        if (!more.order) throw new Error("Order changed during sync. Please retry.");
+        order.lineItems.nodes.push(...more.order.lineItems.nodes);
+        lineAfter = nextCursor(more.order.lineItems.pageInfo, lineCursors);
+      }
     }
-
-    after = payload.orders.pageInfo.endCursor;
+    orders.push(...payload.orders.nodes);
+    after = nextCursor(payload.orders.pageInfo, cursors);
+    if (!after) return orders;
   }
 }
 

@@ -1,3 +1,5 @@
+import { embeddedAppUrl } from "./billingReturn.ts";
+import { ShopifyTokenError } from "./tokenErrors.ts";
 import { randomBytes } from "node:crypto";
 import { verifyShopifyQueryHmac } from "../security/shopifyHmac.ts";
 import type { AppConfig } from "./config.ts";
@@ -11,6 +13,7 @@ export type ShopifyTokenSet = {
   refreshToken?: string;
   accessTokenExpiresAt?: string;
   refreshTokenExpiresAt?: string;
+  scope?: string;
 };
 
 export type OAuthStateStore = {
@@ -95,7 +98,7 @@ export async function handleOAuthCallback(
   await sessionStore.save({
     shop: shopDomain,
     ...tokenSet,
-    scope: config.scopes.join(","),
+    scope: tokenSet.scope || config.scopes.join(","),
   });
 
   await registerUninstallWebhook(shopDomain, config.appUrl, sessionStore);
@@ -119,7 +122,7 @@ export async function handleOAuthCallback(
 
   return {
     shopDomain,
-    redirectTo: `/?shop=${encodeURIComponent(shopDomain)}`,
+    redirectTo: embeddedAppUrl(shopDomain, config),
   };
 }
 
@@ -128,8 +131,9 @@ export async function exchangeShopifyAccessToken(
   code: string,
   config: AppConfig,
 ): Promise<ShopifyTokenSet> {
-  const response = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
+  const response = await tokenFetch(`https://${shopDomain}/admin/oauth/access_token`, {
     method: "POST",
+    signal: AbortSignal.timeout(10000),
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
@@ -143,7 +147,7 @@ export async function exchangeShopifyAccessToken(
   });
 
   if (!response.ok) {
-    throw new Error(`Shopify token exchange failed with ${response.status}`);
+    throw new ShopifyTokenError(response.status === 400 || response.status === 401 ? "invalid_session_token" : "token_exchange_unavailable", response.status === 400 || response.status === 401 ? 401 : 503);
   }
 
   return parseShopifyTokenResponse(await response.json());
@@ -156,8 +160,9 @@ export async function exchangeShopifySessionTokenForOfflineAccessToken(
 ): Promise<ShopifyTokenSet> {
   assertShopDomain(shopDomain);
 
-  const response = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
+  const response = await tokenFetch(`https://${shopDomain}/admin/oauth/access_token`, {
     method: "POST",
+    signal: AbortSignal.timeout(10000),
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
@@ -174,7 +179,7 @@ export async function exchangeShopifySessionTokenForOfflineAccessToken(
   });
 
   if (!response.ok) {
-    throw new Error(`Shopify token exchange failed with ${response.status}`);
+    throw new ShopifyTokenError(response.status === 400 || response.status === 401 ? "invalid_session_token" : "token_exchange_unavailable", response.status === 400 || response.status === 401 ? 401 : 503);
   }
 
   return parseShopifyTokenResponse(await response.json());
@@ -193,8 +198,9 @@ export async function refreshShopifyOfflineAccessToken(
     grant_type: "refresh_token",
     refresh_token: refreshToken,
   });
-  const response = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
+  const response = await tokenFetch(`https://${shopDomain}/admin/oauth/access_token`, {
     method: "POST",
+    signal: AbortSignal.timeout(10000),
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
@@ -203,7 +209,7 @@ export async function refreshShopifyOfflineAccessToken(
   });
 
   if (!response.ok) {
-    throw new Error(`Shopify refresh token exchange failed with ${response.status}`);
+    throw new ShopifyTokenError("token_refresh_required", response.status === 400 || response.status === 401 ? 401 : 503);
   }
 
   return parseShopifyTokenResponse(await response.json());
@@ -212,18 +218,20 @@ export async function refreshShopifyOfflineAccessToken(
 function parseShopifyTokenResponse(payload: unknown): ShopifyTokenSet {
   const token = payload as {
     access_token?: string;
+    scope?: string;
     refresh_token?: string;
     expires_in?: number;
     refresh_token_expires_in?: number;
   };
 
   if (!token.access_token) {
-    throw new Error("Shopify token exchange did not return access_token");
+    throw new ShopifyTokenError("invalid_token_response", 503);
   }
 
   const now = Date.now();
   return {
     accessToken: token.access_token,
+    scope: token.scope,
     refreshToken: token.refresh_token,
     accessTokenExpiresAt: toExpiry(now, token.expires_in),
     refreshTokenExpiresAt: toExpiry(now, token.refresh_token_expires_in),
@@ -240,4 +248,9 @@ function assertShopDomain(shopDomain: string): void {
   if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shopDomain)) {
     throw new Error("Invalid Shopify shop domain");
   }
+}
+
+async function tokenFetch(url: string, init: RequestInit): Promise<Response> {
+  try { return await fetch(url, init); }
+  catch { throw new ShopifyTokenError("token_exchange_unavailable", 503); }
 }

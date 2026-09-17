@@ -16,6 +16,7 @@ export function isShopifyBillingTestMode(
 }
 
 export type BillingStatus = {
+  test?: boolean;
   active: boolean;
   plan: "FREE" | "PRO";
   subscribed: boolean;
@@ -33,6 +34,7 @@ type ActiveSubscriptionsPayload = {
       name: string;
       status: string;
       currentPeriodEnd: string | null;
+      test?: boolean;
       lineItems: Array<{
         plan: {
           pricingDetails:
@@ -107,6 +109,7 @@ const ACTIVE_SUBSCRIPTIONS_QUERY = `#graphql
         name
         status
         currentPeriodEnd
+        test
         lineItems {
           plan {
             pricingDetails {
@@ -191,6 +194,7 @@ export async function getBillingStatusForShop(
   }
 
   return {
+    ...(typeof subscription.test === "boolean" ? { test: subscription.test } : {}),
     active: subscription.status === "ACTIVE",
     plan: subscription.status === "ACTIVE" ? "PRO" : "FREE",
     subscribed: subscription.status === "ACTIVE",
@@ -210,10 +214,17 @@ export async function createProSubscriptionApprovalUrl(
 ): Promise<string> {
   const admin = client || await createShopifyAdminClient(shop, sessionStore);
   const returnUrl = `${config.appUrl}/billing/return?shop=${encodeURIComponent(shop)}`;
+  // Shopify, not a client flag or store-name allowlist, identifies development stores.
+  const shopInfo = await admin.graphql<{ shop: { plan: { partnerDevelopment: boolean } } }>(
+    `query BillingShopPlan { shop { plan { partnerDevelopment } } }`,
+  );
+  if (typeof shopInfo.shop?.plan?.partnerDevelopment !== "boolean") {
+    throw new Error("Unable to verify the shop billing environment. Please retry.");
+  }
   const payload = await admin.graphql<CreateSubscriptionPayload>(CREATE_SUBSCRIPTION_MUTATION, {
     name: PRO_PLAN_NAME,
     returnUrl,
-    test: isShopifyBillingTestMode(),
+    test: isShopifyBillingTestMode() || shopInfo.shop.plan.partnerDevelopment,
     lineItems: [
       {
         plan: {

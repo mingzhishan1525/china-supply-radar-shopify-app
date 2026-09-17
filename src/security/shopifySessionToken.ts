@@ -40,17 +40,18 @@ export function verifyShopifySessionToken(
       return false;
     }
 
-    if (typeof claims.nbf === "number" && claims.nbf > now) {
+    if (typeof claims.nbf !== "number" || !Number.isFinite(claims.nbf) || claims.nbf > now) {
       return false;
     }
 
-    if (typeof claims.exp !== "number" || claims.exp <= now) {
+    if (typeof claims.exp !== "number" || !Number.isFinite(claims.exp) || claims.exp <= now) {
       return false;
     }
 
-    const destShop = claims.dest ? new URL(claims.dest).hostname : null;
-
-    return destShop === expectedShop;
+    const dest = claims.dest ? new URL(claims.dest) : null;
+    const issuer = claims.iss ? new URL(claims.iss) : null;
+    return dest?.origin === `https://${expectedShop}`
+      && issuer?.origin === dest.origin && issuer?.pathname === "/admin";
   } catch {
     return false;
   }

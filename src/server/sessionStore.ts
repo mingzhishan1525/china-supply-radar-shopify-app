@@ -1,3 +1,5 @@
+import { withShopLifecycle } from "./shopLifecycle.ts";
+import { ShopifyTokenError } from "./tokenErrors.ts";
 import { decryptSecret, encryptSecret } from "../security/encryption.ts";
 import type { ShopifyTokenSet } from "./oauth.ts";
 
@@ -29,8 +31,10 @@ export type SaveShopSessionInput = {
 };
 
 export interface SessionStore {
+  reauthorize?(shop: string): Promise<ShopSession>;
   save(session: SaveShopSessionInput): Promise<ShopSession>;
   load(shop: string): Promise<ShopSession | null>;
+  peek?(shop: string): Promise<ShopSession | null>;
   delete(shop: string): Promise<void>;
   deleteShopSessions(shop: string): Promise<void>;
   markUninstalled(shop: string, uninstalledAt?: string): Promise<void>;
@@ -72,6 +76,7 @@ export type PrismaSessionClient = {
         scope: string;
         isInstalled: boolean;
         uninstalledAt: null;
+        installedAt?: Date;
       };
     }): Promise<StoredShopSession>;
     findUnique(args: { where: { shop: string } }): Promise<StoredShopSession | null>;
@@ -124,6 +129,7 @@ export class PrismaSessionStore implements SessionStore {
         scope: session.scope,
         isInstalled: true,
         uninstalledAt: null,
+        ...(session.installedAt ? { installedAt } : {}),
       },
     });
 
@@ -131,6 +137,11 @@ export class PrismaSessionStore implements SessionStore {
   }
 
   async load(shop: string): Promise<ShopSession | null> {
+    const session = await this.peek(shop);
+    return session && this.shouldRefresh(session) ? this.refresh(session) : session;
+  }
+
+  async peek(shop: string): Promise<ShopSession | null> {
     const stored = await this.prisma.shopSession.findUnique({
       where: { shop },
     });
@@ -139,8 +150,7 @@ export class PrismaSessionStore implements SessionStore {
       return null;
     }
 
-    const session = this.toPlainSession(stored);
-    return this.shouldRefresh(session) ? this.refresh(session) : session;
+    return this.toPlainSession(stored);
   }
 
   async delete(shop: string): Promise<void> {
@@ -200,13 +210,18 @@ export class PrismaSessionStore implements SessionStore {
     const pending = this.refreshes.get(session.shop);
     if (pending) return pending;
 
-    const refresh = this.refreshAccessToken!(session.shop, session.refreshToken!)
-      .then((tokenSet) => this.save({
+    const refresh = withShopLifecycle(this, session.shop, async () => {
+      const current = await this.peek(session.shop);
+      if (!current?.isInstalled) throw new ShopifyTokenError("invalid_session_token", 401);
+      if (current.accessToken !== session.accessToken) return current;
+      const tokenSet = await this.refreshAccessToken!(session.shop, session.refreshToken!);
+      return this.save({
         shop: session.shop,
         ...tokenSet,
-        scope: session.scope,
+        scope: tokenSet.scope || session.scope,
         installedAt: session.installedAt,
-      }))
+      });
+    })
       .finally(() => this.refreshes.delete(session.shop));
     this.refreshes.set(session.shop, refresh);
     return refresh;
@@ -249,11 +264,15 @@ export class MemorySessionStore implements SessionStore {
   }
 
   async load(shop: string): Promise<ShopSession | null> {
+    const session = await this.peek(shop);
+    return session && this.shouldRefresh(session) ? this.refresh(session) : session;
+  }
+
+  async peek(shop: string): Promise<ShopSession | null> {
     const stored = this.sessions.get(shop);
 
     if (!stored) return null;
-    const session = this.toPlainSession(stored);
-    return this.shouldRefresh(session) ? this.refresh(session) : session;
+    return this.toPlainSession(stored);
   }
 
   async delete(shop: string): Promise<void> {
@@ -317,13 +336,18 @@ export class MemorySessionStore implements SessionStore {
   private refresh(session: ShopSession): Promise<ShopSession> {
     const pending = this.refreshes.get(session.shop);
     if (pending) return pending;
-    const refresh = this.refreshAccessToken!(session.shop, session.refreshToken!)
-      .then((tokenSet) => this.save({
+    const refresh = withShopLifecycle(this, session.shop, async () => {
+      const current = await this.peek(session.shop);
+      if (!current?.isInstalled) throw new ShopifyTokenError("invalid_session_token", 401);
+      if (current.accessToken !== session.accessToken) return current;
+      const tokenSet = await this.refreshAccessToken!(session.shop, session.refreshToken!);
+      return this.save({
         shop: session.shop,
         ...tokenSet,
-        scope: session.scope,
+        scope: tokenSet.scope || session.scope,
         installedAt: session.installedAt,
-      }))
+      });
+    })
       .finally(() => this.refreshes.delete(session.shop));
     this.refreshes.set(session.shop, refresh);
     return refresh;

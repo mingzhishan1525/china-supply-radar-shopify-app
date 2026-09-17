@@ -1,6 +1,6 @@
 import { ShopifyAdminError } from "../shopify/adminClient.ts";
-import { verifyShopifySessionToken } from "../security/shopifySessionToken.ts";
-import { exchangeShopifySessionTokenForOfflineAccessToken } from "./oauth.ts";
+import { authenticateShopRequest } from "./requestAuth.ts";
+import { ShopifyTokenError } from "./tokenErrors.ts";
 import {
   BillingConfigurationError,
   cancelProSubscription,
@@ -9,6 +9,7 @@ import {
 } from "./billing.ts";
 import type { AppConfig } from "./config.ts";
 import {
+  ProductSyncError,
   listVariantSnapshotsForShop,
   syncProductsForShop,
   type VariantSnapshotPrismaClient,
@@ -56,7 +57,7 @@ export type ApiDeps = {
   supplyChain: SupplyChainClient;
   config?: AppConfig;
   authorizationHeader?: string | null;
-  billingStatusResolver?: (shop: string) => Promise<BillingStatus>;
+  billingStatusResolver?: (shop: string, store: SessionStore) => Promise<BillingStatus>;
 };
 
 export async function handleApiRequest(
@@ -109,6 +110,16 @@ export async function handleApiRequest(
     if (method === "GET" && path === "/api/billing/status") {
       const session = await requireInstalledShop(query, deps);
       const billing = await resolveBillingStatus(session.shop, deps);
+      // Attribute only Shopify-verified subscriptions from an authenticated call.
+      // Stable external IDs let Revenue OS deduplicate repeated status reads.
+      if (billing.subscribed && billing.subscriptionId && deps.config) {
+        void trackRevenueEvent(deps.config, {
+          eventType: "SUBSCRIPTION", shop: session.shop,
+          amount: billing.test ? 0 : deps.config.revenueOsPlanAmount,
+          externalId: `subscription:shopify:${billing.subscriptionId}`,
+          metadata: { trigger: "authenticated_billing_status", subscription_id: billing.subscriptionId, test: billing.test === true },
+        });
+      }
 
       return {
         status: 200,
@@ -423,6 +434,10 @@ export async function handleApiRequest(
       };
     }
 
+    if (error instanceof ShopifyTokenError) {
+      return { status: error.status, body: errorBody(error.code, error.message) };
+    }
+
     if (error instanceof ShopifyAdminError) {
       return {
         status: error.status || 502,
@@ -451,7 +466,7 @@ export async function handleApiRequest(
       };
     }
 
-    if (error instanceof OrdersSyncError) {
+    if (error instanceof ProductSyncError || error instanceof OrdersSyncError) {
       return {
         status: error.status,
         body: errorBody(error.code, error.message),
@@ -468,29 +483,10 @@ export async function handleApiRequest(
 
 async function resolveBillingStatus(shop: string, deps: ApiDeps) {
   if (deps.billingStatusResolver) {
-    return deps.billingStatusResolver(shop);
+    return deps.billingStatusResolver(shop, deps.sessionStore);
   }
 
-  if (deps.config) {
-    throw new ApiError(
-      "missing_billing_resolver",
-      "Billing entitlement verification is unavailable",
-      500,
-    );
-  }
-
-  // Unit-level API callers can omit billing; the production server always injects
-  // the Shopify-backed resolver below.
-  return {
-    active: true,
-    plan: "PRO" as const,
-    subscribed: true,
-    planName: "China Supply Radar Pro",
-    status: "ACTIVE",
-    subscriptionId: "test-entitlement",
-    cancelAtPeriodEnd: false,
-    currentPeriodEnd: null,
-  };
+  throw new ApiError("missing_billing_resolver", "Billing entitlement verification is unavailable", 503);
 }
 
 async function getEntitlements(shop: string, deps: ApiDeps) {
@@ -547,54 +543,12 @@ async function requireInstalledShop(query: URLSearchParams, deps: ApiDeps) {
     throw new ApiError("missing_shop", "Missing shop query parameter", 400);
   }
 
-  if (deps.authorizationHeader && deps.config) {
-    const token = parseBearerToken(deps.authorizationHeader);
-
-    if (!token || !verifyShopifySessionToken(token, shop, deps.config)) {
-      console.warn("[API auth] invalid Shopify session token", {
-        shop,
-        hasBearerToken: Boolean(token),
-      });
-      throw new ApiError("invalid_session_token", "Invalid Shopify session token", 401);
-    }
-
-    const offlineTokenSet = await exchangeShopifySessionTokenForOfflineAccessToken(
-      shop,
-      token,
-      deps.config,
-    );
-    await deps.sessionStore.save({
-      shop,
-      ...offlineTokenSet,
-      scope: deps.config.scopes.join(","),
-    });
-  } else {
-    console.warn("[API auth] request without Shopify session token", {
-      shop,
-      hasAuthorizationHeader: Boolean(deps.authorizationHeader),
-      hasConfig: Boolean(deps.config),
-    });
-  }
-
-  const session = await deps.sessionStore.load(shop);
-
-  if (!session) {
-    console.warn("[API auth] shop session was not found", { shop });
-    throw new ApiError("shop_not_installed", "Shop is not installed", 401);
-  }
-
-  if (!session.isInstalled) {
-    console.warn("[API auth] shop session is uninstalled", { shop });
-    throw new ApiError("shop_uninstalled", "Shop is not installed", 403);
-  }
+  if (!deps.config) throw new ApiError("missing_config", "App authentication is unavailable", 503);
+  const authenticated = await authenticateShopRequest(shop, deps.authorizationHeader, deps.config, deps.sessionStore);
+  deps.sessionStore = authenticated.store;
+  const session = authenticated.session;
 
   return session;
-}
-
-function parseBearerToken(authorizationHeader: string): string | null {
-  const match = authorizationHeader.match(/^Bearer\s+(.+)$/i);
-
-  return match?.[1] || null;
 }
 
 class ApiError extends Error {
