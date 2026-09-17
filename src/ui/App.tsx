@@ -1346,7 +1346,7 @@ function Orders({
           </InlineStack>
           <InlineGrid columns={{ xs: 1, md: 4 }} gap="300">
             <SyncResultMetric label="Orders scanned" value={ordersSyncResult.ordersScanned.toString()} />
-            <SyncResultMetric label="Products with sales" value={salesVelocity.length.toString()} />
+            <SyncResultMetric label="Variants with sales" value={salesVelocity.filter(item => item.unitsSold > 0).length.toString()} />
             <SyncResultMetric label="Daily sales ready" value={salesVelocity.length ? "Yes" : "Pending"} />
             <SyncResultMetric label="Analysis window" value={`${ordersSyncResult.windowDays} days`} />
           </InlineGrid>
@@ -1969,7 +1969,7 @@ function getDashboardSummary(
     mediumRiskCount: recommendations.filter((item) => item.riskLevel === "medium").length.toString(),
     lowRiskCount: recommendations.filter((item) => item.riskLevel === "low").length.toString(),
     productsRequiringReorder: reorderRequired.length.toString(),
-    earliestStockoutDays: earliestStockoutDays === undefined ? "Pending" : averageCoverDays.toString(),
+    earliestStockoutDays: earliestStockoutDays === undefined ? "Pending" : earliestStockoutDays.toString(),
     needsSupplierMapping: recommendations.filter((item) => item.reason === "needs_supplier_mapping").length.toString(),
     needsSalesVelocity: recommendations.filter((item) => item.reason === "needs_sales_velocity").length.toString(),
     outOfStockProducts: recommendations.filter((item) => item.reason === "out_of_stock").length.toString(),
@@ -2070,28 +2070,28 @@ function getInventoryDecision(
   );
   const mediumRecommendation = recommendations.find((item) => item.riskLevel === "medium");
   const actionItem = reorderQueue[0];
-  const coverageDays = summary.earliestStockoutDays === "Pending" ? "300" : summary.earliestStockoutDays;
+  const coverageDays = summary.earliestStockoutDays === "Pending" ? (demoMode ? "300" : null) : summary.earliestStockoutDays;
 
   if (urgentRecommendation || actionItem) {
     const sku = actionItem?.sku || "your highest-risk SKU";
-    const days = actionItem?.inventoryCoverDays || urgentRecommendation?.inventoryCoverDays || coverageDays;
+    const days = actionItem?.inventoryCoverDays ?? urgentRecommendation?.inventoryCoverDays ?? coverageDays;
 
     return {
       status: "Critical",
       tone: "critical" as const,
-      message: `You have reorder risk within the next ${days} days`,
-      action: `Reorder ${sku} in ${days} days`,
+      message: days === null ? "Inventory risk detected; reorder timing needs more data" : Number(days) <= 0 ? "A product is out of stock or needs immediate review" : `You have reorder risk within the next ${days} days`,
+      action: days === null ? "Review stock, sales history and supplier lead times" : Number(days) <= 0 ? `Review replenishment for ${sku} now` : `Review replenishment for ${sku} before stock runs out in ${days} days`,
     };
   }
 
   if (mediumRecommendation) {
-    const days = mediumRecommendation.inventoryCoverDays || coverageDays;
+    const days = mediumRecommendation.inventoryCoverDays ?? coverageDays;
 
     return {
       status: "Warning",
       tone: "warning" as const,
-      message: `You should review reorder timing within the next ${days} days`,
-      action: `Reorder your highest-risk SKU in ${days} days`,
+      message: days === null ? "Reorder timing needs more sales and supplier data" : `You should review reorder timing within the next ${days} days`,
+      action: "Review supplier lead times and the reorder queue",
     };
   }
 
@@ -2151,12 +2151,12 @@ function getDecisionKpis(
     : recommendations.reduce((sum, item) => sum + (item.estimatedDailySales || 0), 0) / Math.max(recommendations.length, 1);
   const nextReorderDate = reorderQueue[0]?.recommendedReorderDate
     ? formatDate(reorderQueue[0].recommendedReorderDate)
-    : "No reorder needed";
+    : recommendations.some(item => item.riskLevel !== "low") ? "Review stock and supplier data" : "No reorder date calculated";
 
   return [
     {
       label: "Daily Sales",
-      value: averageDailySales > 0 ? `${averageDailySales.toFixed(1)} units/day` : "Pending",
+      value: salesVelocity.length || demoMode || averageDailySales > 0 ? `${averageDailySales.toFixed(1)} units/day` : "Pending",
       tone: "info" as const,
     },
     {
