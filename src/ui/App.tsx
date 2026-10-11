@@ -578,14 +578,6 @@ export default function App() {
   const currentPath = typeof window === "undefined" ? "/" : window.location.pathname;
   const isPro = billingState.status === "ready" && billingState.billing.subscribed;
 
-  useEffect(() => {
-    if (!isPro && billingState.status === "ready" && [1, 2, 3].includes(selectedTab)) {
-      trackCommercialEvent("paywall_view", {
-        feature: tabs[selectedTab]?.id || "unknown",
-        plan: "FREE",
-      });
-    }
-  }, [billingState.status, isPro, selectedTab]);
 
   if (currentPath === "/landing") {
     return (
@@ -650,9 +642,7 @@ export default function App() {
     <Page
       title="China Supply Radar"
       subtitle="Avoid stockouts from Chinese factory holidays. Optimize reorder timing based on real sales data and supplier lead times."
-      primaryAction={isPro
-        ? <Button variant="primary" onClick={syncOrders} loading={isSyncingOrders}>Sync Order History</Button>
-        : <Button variant="primary" onClick={startBilling} loading={isStartingBilling}>Upgrade · $29/month</Button>}
+      primaryAction={<Button variant="primary" onClick={syncOrders} loading={isSyncingOrders}>Sync Order History</Button>}
       secondaryActions={[
         {
           content: "Sync Products & Inventory",
@@ -661,6 +651,11 @@ export default function App() {
         },
       ]}
     >
+      {billingState.status === "ready" && !isPro ? (
+        <Banner title="Start free with one SKU and one supplier" tone="info">
+          <p>Sync products, add a supplier and map your SKU in Suppliers, then sync orders to generate your first reorder recommendation. Pro unlocks more SKUs and suppliers.</p>
+        </Banner>
+      ) : null}
       <Tabs
         tabs={tabs}
         selected={selectedTab}
@@ -698,6 +693,7 @@ export default function App() {
             dataError={dataError}
             onSyncOrders={syncOrders}
             onSyncProducts={syncProducts}
+            onOpenQueue={() => setSelectedTab(3)}
             billingState={billingState}
             isStartingBilling={isStartingBilling}
             onStartBilling={startBilling}
@@ -705,17 +701,32 @@ export default function App() {
             isCancellingBilling={isCancellingBilling}
           />
         ) : null}
-        {selectedTab === 1 && isPro ? (
+        {selectedTab === 1 ? (
           <Suppliers
             shop={shop}
             suppliers={suppliers}
+            isPro={isPro}
             onChanged={loadSupplyChainData}
           />
         ) : null}
-        {selectedTab === 1 && !isPro ? (
-          <MonetizationPaywall feature="Supplier Intelligence" onUpgrade={startBilling} loading={isStartingBilling} />
+        {selectedTab === 1 ? (
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">Map your SKU to a supplier</Text>
+              <Text as="p" tone="subdued">Add a supplier above, choose it below, then sync order history to calculate reorder risk.</Text>
+              <ProductsMappingTable
+                productInsights={productInsights}
+                snapshots={productsState.snapshots}
+                suppliers={suppliers}
+                mappings={mappings}
+                salesVelocity={salesVelocity}
+                shop={shop}
+                onMapped={loadSupplyChainData}
+              />
+            </BlockStack>
+          </Card>
         ) : null}
-        {selectedTab === 2 && isPro ? (
+        {selectedTab === 2 ? (
           <Orders
             products={productsState.snapshots}
             ordersSyncResult={ordersSyncResult}
@@ -724,10 +735,7 @@ export default function App() {
             onSyncOrders={syncOrders}
           />
         ) : null}
-        {selectedTab === 2 && !isPro ? (
-          <MonetizationPaywall feature="Sales Velocity & Order History" onUpgrade={startBilling} loading={isStartingBilling} />
-        ) : null}
-        {selectedTab === 3 && isPro ? (
+        {selectedTab === 3 ? (
           <Recommendations
             recommendations={recommendations}
             reorderQueue={reorderQueue}
@@ -737,9 +745,6 @@ export default function App() {
             isSyncingOrders={isSyncingOrders}
             onSyncOrders={syncOrders}
           />
-        ) : null}
-        {selectedTab === 3 && !isPro ? (
-          <MonetizationPaywall feature="Inventory Risk Predictions" onUpgrade={startBilling} loading={isStartingBilling} />
         ) : null}
         {selectedTab === 4 ? <HolidayCalendar /> : null}
         {selectedTab === 5 ? (
@@ -1054,6 +1059,7 @@ function Overview({
   dataError,
   onSyncOrders,
   onSyncProducts,
+  onOpenQueue,
   billingState,
   isStartingBilling,
   onStartBilling,
@@ -1073,6 +1079,7 @@ function Overview({
   dataError: string | null;
   onSyncOrders: () => void;
   onSyncProducts: () => void;
+  onOpenQueue: () => void;
   billingState: BillingState;
   isStartingBilling: boolean;
   onStartBilling: () => void;
@@ -1160,7 +1167,7 @@ function Overview({
             <Text as="h2" variant="headingMd">Recommended Action</Text>
             <Text as="p" variant="headingLg">{decision.action}</Text>
             <InlineStack gap="300">
-              <Button variant={decision.status === "Healthy" ? undefined : "primary"}>
+              <Button variant={decision.status === "Healthy" ? undefined : "primary"} onClick={onOpenQueue}>
                 {decision.status === "Healthy" ? "Review inventory" : "Open reorder queue"}
               </Button>
               <Button onClick={onSyncOrders} loading={isSyncingOrders}>Refresh recommendations</Button>
@@ -1235,42 +1242,6 @@ function BillingButton({
     >
       Start $29/month
     </Button>
-  );
-}
-
-function MonetizationPaywall({
-  feature,
-  loading,
-  onUpgrade,
-}: {
-  feature: string;
-  loading: boolean;
-  onUpgrade: () => void;
-}) {
-  return (
-    <Layout>
-      <Layout.Section>
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack align="space-between">
-              <Text as="h2" variant="headingLg">{feature}</Text>
-              <Badge tone="attention">PRO</Badge>
-            </InlineStack>
-            <Text as="p" tone="subdued">
-              Your Free plan includes one SKU and the basic risk dashboard. Upgrade to turn this preview into an actionable forecast.
-            </Text>
-            <List>
-              <List.Item>Unlimited SKU monitoring</List.Item>
-              <List.Item>Supplier reliability and risk factors</List.Item>
-              <List.Item>Sales velocity, reorder forecasts, and weekly alerts</List.Item>
-            </List>
-            <Button variant="primary" onClick={onUpgrade} loading={loading}>
-              Unlock Pro · $29/month
-            </Button>
-          </BlockStack>
-        </Card>
-      </Layout.Section>
-    </Layout>
   );
 }
 
@@ -1439,10 +1410,12 @@ function Recommendations({
 function Suppliers({
   shop,
   suppliers,
+  isPro,
   onChanged,
 }: {
   shop: string | null;
   suppliers: Supplier[];
+  isPro: boolean;
   onChanged: () => void;
 }) {
   const [draft, setDraft] = useState<SupplierDraft>({
@@ -1454,29 +1427,41 @@ function Suppliers({
     riskLevel: "medium",
   });
 
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const freeLimitReached = !isPro && suppliers.length >= 1;
+
   const create = async () => {
     if (!shop || !draft.name.trim()) {
       return;
     }
 
-    await fetchJson(`/api/suppliers?shop=${encodeURIComponent(shop)}`, {
-      method: "POST",
-      body: JSON.stringify({
-        ...draft,
-        leadTimeDays: Number.parseInt(draft.leadTimeDays, 10) || 30,
-      }),
-    });
+    setIsCreating(true);
+    setCreateError(null);
+    try {
+      await fetchJson(`/api/suppliers?shop=${encodeURIComponent(shop)}`, {
+        method: "POST",
+        body: JSON.stringify({
+          ...draft,
+          leadTimeDays: Number.parseInt(draft.leadTimeDays, 10) || 30,
+        }),
+      });
 
-    setDraft({
-      name: "",
-      city: "",
-      contactEmail: "",
-      leadTimeDays: "30",
-      notes: "",
-      riskLevel: "medium",
-    });
+      setDraft({
+        name: "",
+        city: "",
+        contactEmail: "",
+        leadTimeDays: "30",
+        notes: "",
+        riskLevel: "medium",
+      });
 
-    onChanged();
+      onChanged();
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : "Unable to add supplier");
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (
@@ -1496,7 +1481,9 @@ function Suppliers({
             <TextField label="Lead time days" type="number" value={draft.leadTimeDays} onChange={(value) => setDraft({ ...draft, leadTimeDays: value })} autoComplete="off" />
           </InlineGrid>
           <TextField label="Notes" value={draft.notes} onChange={(value) => setDraft({ ...draft, notes: value })} autoComplete="off" multiline={3} />
-          <Button variant="primary" onClick={create} disabled={!shop || !draft.name.trim()}>Add supplier</Button>
+          {createError ? <Banner tone="critical"><p>{createError}</p></Banner> : null}
+          {freeLimitReached ? <Text as="p" tone="subdued">Your free supplier is ready. Map it to your SKU below. Pro is required to add another supplier.</Text> : null}
+          <Button variant="primary" onClick={create} loading={isCreating} disabled={!shop || !draft.name.trim() || freeLimitReached || isCreating}>Add supplier</Button>
         </BlockStack>
       </Card>
       {suppliers.length === 0 ? (
@@ -1522,10 +1509,10 @@ function Suppliers({
               <List.Item>Contact: {supplier.contactEmail || supplier.contactName || "Not set"}</List.Item>
               <List.Item>Notes: {supplier.notes || "None"}</List.Item>
             </List>
-            <InlineStack gap="200">
+            {isPro ? <InlineStack gap="200">
               <Button onClick={() => updateSupplier(shop, supplier, { leadTimeDays: supplier.leadTimeDays + 1 }, onChanged)}>+1 lead day</Button>
               <Button tone="critical" onClick={() => deleteSupplier(shop, supplier.id, onChanged)}>Delete</Button>
-            </InlineStack>
+            </InlineStack> : null}
           </BlockStack>
         </Card>
       ))}
@@ -1812,6 +1799,19 @@ function ProductsMappingTable({
   shop: string | null;
   onMapped: () => void;
 }) {
+  const [mappingError, setMappingError] = useState<string | null>(null);
+  const [isMapping, setIsMapping] = useState(false);
+  const saveMapping = async (snapshot: VariantSnapshot, supplierId: string) => {
+    setMappingError(null);
+    setIsMapping(true);
+    try {
+      await mapSupplier(shop, snapshot, supplierId, onMapped);
+    } catch (error) {
+      setMappingError(error instanceof Error ? error.message : "Unable to map supplier");
+    } finally {
+      setIsMapping(false);
+    }
+  };
   const mappingByVariant = new Map(mappings.map((mapping) => [mapping.variantSnapshotId, mapping]));
   const supplierById = new Map(suppliers.map((supplier) => [supplier.id, supplier]));
   const velocityByVariant = new Map(salesVelocity.map((velocity) => [velocity.variantSnapshotId, velocity]));
@@ -1821,6 +1821,8 @@ function ProductsMappingTable({
   }
 
   return (
+    <BlockStack gap="300">
+    {mappingError ? <Banner tone="critical"><p>{mappingError}</p></Banner> : null}
     <DataTable
       columnContentTypes={["text", "numeric", "text", "text", "text", "text", "text"]}
       headings={["Product", "Inventory", "Sales velocity", "Supplier", "Lead time", "Buffer", "Status"]}
@@ -1842,7 +1844,8 @@ function ProductsMappingTable({
               { label: "Needs supplier", value: "" },
               ...suppliers.map((item) => ({ label: item.name, value: item.id })),
             ]}
-            onChange={(supplierId) => mapSupplier(shop, snapshot, supplierId, onMapped)}
+            disabled={isMapping || !suppliers.length}
+            onChange={(supplierId) => void saveMapping(snapshot, supplierId)}
           />,
           mapping ? `${mapping.factoryLeadTimeDays} days` : "Not set",
           mapping ? `${mapping.reorderBufferDays} days` : "7 days",
@@ -1850,6 +1853,7 @@ function ProductsMappingTable({
         ];
       })}
     />
+    </BlockStack>
   );
 }
 

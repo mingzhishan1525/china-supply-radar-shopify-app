@@ -43,6 +43,8 @@ export async function trackGrowthEvent(
         ...payload.metadata,
       },
     }),
+  }).then((response) => {
+    if (!response.ok) throw new Error(`Growth Engine returned ${response.status}`);
   }).catch((error) => {
     console.warn("[growth-tracking] failed to send Shopify event", {
       eventType: payload.eventType,
