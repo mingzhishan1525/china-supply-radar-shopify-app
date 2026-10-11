@@ -1870,10 +1870,14 @@ describe("free activation gate", () => {
     assert.equal(body.recommendations.length, 1);
     assert.equal(body.recommendations[0].variantSnapshotId, variants[0].id);
     assert.ok(body.recommendations[0].latestReorderDate);
-    assert.equal(events.length, 1);
-    assert.equal(events[0].event_type, "ACTIVATE");
-    assert.equal(events[0].metadata.plan, "FREE");
-    assert.equal(events[0].metadata.event_id, `first_value:shopify:${shop}:v1`);
+    assert.equal(events.length, 2);
+    const activation = events.find(event => event.event_type === "ACTIVATE")!;
+    const installation = events.find(event => event.event_type === "INSTALL")!;
+    assert.equal(installation.visitor_id, activation.visitor_id);
+    assert.equal(installation.metadata.trigger, "installed_session_confirmation");
+    assert.ok(installation.metadata.installed_at);
+    assert.equal(activation.metadata.plan, "FREE");
+    assert.equal(activation.metadata.event_id, `first_value:shopify:${shop}:v1`);
     for (const [path, key] of [["/api/products", "products"], ["/api/sales-velocity", "salesVelocity"], ["/api/recommendations", "recommendations"], ["/api/reorder-queue", "queue"]]) {
       const response = await call(deps, "GET", path);
       assert.equal(response.status, 200);

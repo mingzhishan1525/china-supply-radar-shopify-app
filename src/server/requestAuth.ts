@@ -1,6 +1,7 @@
 import { withShopLifecycle } from "./shopLifecycle.ts";
 import { verifyShopifySessionToken } from "../security/shopifySessionToken.ts";
 import { exchangeShopifySessionTokenForOfflineAccessToken } from "./oauth.ts";
+import { trackGrowthEvent } from "./growthTracking.ts";
 import { ShopifyTokenError } from "./tokenErrors.ts";
 import type { AppConfig } from "./config.ts";
 import type { SessionStore, ShopSession } from "./sessionStore.ts";
@@ -18,8 +19,15 @@ export async function authenticateShopRequest(shop: string, header: string | nul
     if (existing) return existing;
     const task = withShopLifecycle(store, shop, async () => {
       try {
+        const previous = store.peek ? await store.peek(shop) : await store.load(shop);
         const tokenSet = await exchangeShopifySessionTokenForOfflineAccessToken(shop, token, config);
-        return await store.save({ shop, ...tokenSet, scope: tokenSet.scope || config.scopes.join(","), installedAt: new Date().toISOString() });
+        const isNewInstallation = !previous?.isInstalled;
+        const saved = await store.save({ shop, ...tokenSet, scope: tokenSet.scope || config.scopes.join(","), installedAt: isNewInstallation ? new Date().toISOString() : previous.installedAt });
+        if (isNewInstallation) await trackGrowthEvent(config, {
+          eventType: "INSTALL", source: "shopify", shop,
+          metadata: { event_id: `install:shopify:${shop}:${saved.installedAt}`, installed_at: saved.installedAt, trigger: "managed_installation" },
+        });
+        return saved;
       } catch (error) {
         if (error instanceof ShopifyTokenError) throw error;
         if (error instanceof TypeError || (error instanceof Error && /Timeout|Abort/.test(error.name))) {
