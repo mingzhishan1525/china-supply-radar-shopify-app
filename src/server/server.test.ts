@@ -1804,6 +1804,37 @@ describe("free activation gate", () => {
   const call = (deps: ApiDeps, method: string, path: string, body: unknown = {}) =>
     handleApiRequest(method, path, query(), deps, body);
 
+  it("skips gift cards and selects a stocked SKU with sales before mapping, then pins it", async () => {
+    const { deps, variants } = await fixture();
+    const gift = testVariant("0", "A Gift Card", 0);
+    await deps.prisma.variantSnapshot.upsert({
+      where: { shop_shopifyVariantId: { shop, shopifyVariantId: gift.shopifyVariantId } },
+      create: gift, update: { ...gift, syncedAt: new Date(gift.syncedAt) },
+    });
+    const productId = async () => ((await call(deps, "GET", "/api/products")).body as { products: Array<{ id: string }> }).products[0]?.id;
+    assert.equal(await productId(), variants[0].id);
+    const velocity = {
+      shop, variantSnapshotId: variants[1].id!, shopifyVariantId: variants[1].shopifyVariantId,
+      unitsSold: 30, windowDays: 30, estimatedDailySales: 1,
+      calculatedFrom: "2026-09-11T00:00:00Z", calculatedTo: "2026-10-11T00:00:00Z",
+    };
+    await deps.supplyChain.salesVelocity.upsert({
+      where: { shop_shopifyVariantId_windowDays: { shop, shopifyVariantId: velocity.shopifyVariantId, windowDays: 30 } },
+      create: velocity, update: velocity,
+    });
+    assert.equal(await productId(), variants[1].id);
+    const supplier = await call(deps, "POST", "/api/suppliers", { name: "Supplier" });
+    assert.equal((await call(deps, "POST", "/api/supplier-mappings", {
+      supplierId: (supplier.body as { id: string }).id, variantSnapshotId: variants[1].id,
+    })).status, 201);
+    const other = { ...velocity, variantSnapshotId: variants[0].id!, shopifyVariantId: variants[0].shopifyVariantId };
+    await deps.supplyChain.salesVelocity.upsert({
+      where: { shop_shopifyVariantId_windowDays: { shop, shopifyVariantId: other.shopifyVariantId, windowDays: 30 } },
+      create: other, update: other,
+    });
+    assert.equal(await productId(), variants[1].id);
+  });
+
   it("creates one supplier, maps one SKU, generates first value and emits activation only after sales data", async (t) => {
     const { deps, variants } = await fixture();
     const events: Array<{ event_type: string; metadata: Record<string, unknown> }> = [];

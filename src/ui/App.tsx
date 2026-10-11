@@ -653,7 +653,7 @@ export default function App() {
     >
       {billingState.status === "ready" && !isPro ? (
         <Banner title="Start free with one SKU and one supplier" tone="info">
-          <p>Sync products, add a supplier and map your SKU in Suppliers, then sync orders to generate your first reorder recommendation. Pro unlocks more SKUs and suppliers.</p>
+          <p>Sync products and orders first. We select one physical SKU, preferring stock with recent sales. Add a supplier and map this SKU in Suppliers, then refresh recommendations. Mapping keeps your selected SKU fixed. Pro unlocks more SKUs and suppliers.</p>
         </Banner>
       ) : null}
       <Tabs
