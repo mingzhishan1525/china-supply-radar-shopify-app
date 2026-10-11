@@ -405,6 +405,12 @@ export async function handleApiRequest(
         };
 
         await Promise.all([
+          // Confirm a real installed session so managed installs missed by older releases
+          // can be joined to activation. Metrics deduplicate by shop, not raw event rows.
+          trackGrowthEvent(deps.config, {
+            eventType: "INSTALL", source: "shopify", shop: session.shop,
+            metadata: { event_id: `install:shopify:${session.shop}:${session.installedAt}`, installed_at: session.installedAt, trigger: "installed_session_confirmation" },
+          }),
           trackGrowthEvent(deps.config, {
             eventType: "ACTIVATE",
             source: "shopify",

@@ -79,3 +79,24 @@ it("recovers an explicitly rejected offline token once, without retrying ambiguo
     assert.equal(requests,3);assert.equal(exchanges,1);
   }finally{globalThis.fetch=original;}
 });
+
+it("tracks one managed install under concurrency and does not count token recovery as a new install", async () => {
+  const original = globalThis.fetch;
+  const events: any[] = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).startsWith("https://growth.example/")) { events.push(JSON.parse(String(init?.body))); return Response.json({ok:true}); }
+    return Response.json({access_token:"managed-offline",scope:"read_products"});
+  };
+  try {
+    const store = new MemorySessionStore();
+    const cfg = {...config,growthEngineApiUrl:"https://growth.example"};
+    const results = await Promise.all(Array.from({length:5}, () => authenticateShopRequest(shop,header(),cfg,store)));
+    assert.equal(events.length,1);
+    assert.equal(events[0].event_type,"INSTALL");
+    assert.equal(events[0].visitor_id,shop);
+    assert.equal(events[0].metadata.installed_at,results[0].session.installedAt);
+    await results[0].store.reauthorize!(shop);
+    assert.equal(events.length,1);
+    assert.equal((await store.load(shop))!.installedAt,results[0].session.installedAt);
+  } finally { globalThis.fetch = original; }
+});
