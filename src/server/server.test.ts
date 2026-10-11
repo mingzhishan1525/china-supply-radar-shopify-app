@@ -1837,7 +1837,7 @@ describe("free activation gate", () => {
 
   it("creates one supplier, maps one SKU, generates first value and emits activation only after sales data", async (t) => {
     const { deps, variants } = await fixture();
-    const events: Array<{ event_type: string; metadata: Record<string, unknown> }> = [];
+    const events: Array<{ event_type: string; visitor_id: string; metadata: Record<string, unknown> }> = [];
     t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
       events.push(JSON.parse(String(init.body)));
       return new Response("{}", { status: 202 });
