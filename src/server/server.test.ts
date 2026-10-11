@@ -1339,6 +1339,7 @@ describe("recommendations", () => {
     assert.equal(response.status, 200);
     assert.deepEqual((response.body as { queue: unknown[] }).queue, [
       {
+        variantSnapshotId: "variant_1",
         sku: "ADAPTER-US",
         productTitle: "Travel Adapter",
         variantTitle: "Default Title",
@@ -1775,3 +1776,102 @@ class FakePrismaSessionClient implements PrismaSessionClient {
     return this.rows.get(shop) || null;
   }
 }
+
+
+describe("free activation gate", () => {
+  const shop = "demo-store.myshopify.com";
+  const query = () => new URLSearchParams({ shop });
+  const freeBilling = async (): Promise<import("./billing.ts").BillingStatus> => ({
+    active: false, plan: "FREE", subscribed: false, planName: null,
+    status: null, subscriptionId: null, cancelAtPeriodEnd: false, currentPeriodEnd: null,
+  });
+  async function fixture() {
+    const { sessionStore, supplyChain } = await installedApiDeps();
+    const prisma = new MemoryVariantSnapshotStore();
+    const variants = [];
+    for (const [id, title, inventory] of [["1", "A widget", 90], ["2", "B widget", 1]] as const) {
+      const data = testVariant(id, title, inventory);
+      const variant = await prisma.variantSnapshot.upsert({
+        where: { shop_shopifyVariantId: { shop, shopifyVariantId: data.shopifyVariantId } },
+        create: data, update: { ...data, syncedAt: new Date(data.syncedAt) },
+      });
+      supplyChain.addVariant(variant);
+      variants.push(variant);
+    }
+    const deps = { sessionStore, supplyChain, prisma, billingStatusResolver: freeBilling };
+    return { deps, variants };
+  }
+  const call = (deps: ApiDeps, method: string, path: string, body: unknown = {}) =>
+    handleApiRequest(method, path, query(), deps, body);
+
+  it("creates one supplier, maps one SKU, generates first value and emits activation only after sales data", async (t) => {
+    const { deps, variants } = await fixture();
+    const events: Array<{ event_type: string; metadata: Record<string, unknown> }> = [];
+    t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+      events.push(JSON.parse(String(init.body)));
+      return new Response("{}", { status: 202 });
+    });
+    const trackedDeps = { ...deps, config: { ...config, growthEngineApiUrl: "https://growth.example.com" } };
+    const supplier = await call(trackedDeps, "POST", "/api/suppliers", { name: "Fixture supplier", leadTimeDays: 25 });
+    assert.equal(supplier.status, 201);
+    const supplierId = (supplier.body as { id: string }).id;
+    const input = { supplierId, variantSnapshotId: variants[0].id };
+    assert.equal((await call(trackedDeps, "POST", "/api/supplier-mappings", input)).status, 201);
+    assert.equal((await call(trackedDeps, "POST", "/api/supplier-mappings", input)).status, 201);
+    const pending = await call(trackedDeps, "POST", "/api/recommendations/generate");
+    assert.equal((pending.body as { activated: boolean }).activated, false);
+    assert.equal(events.length, 0);
+    for (const variant of variants) {
+      const velocity = {
+        shop, variantSnapshotId: variant.id!, shopifyVariantId: variant.shopifyVariantId,
+        unitsSold: 60, windowDays: 30, estimatedDailySales: 2,
+        calculatedFrom: "2026-09-11T00:00:00Z", calculatedTo: "2026-10-11T00:00:00Z",
+      };
+      await deps.supplyChain.salesVelocity.upsert({
+        where: { shop_shopifyVariantId_windowDays: { shop, shopifyVariantId: variant.shopifyVariantId, windowDays: 30 } },
+        create: velocity, update: velocity,
+      });
+    }
+    const ready = await call(trackedDeps, "POST", "/api/recommendations/generate");
+    const body = ready.body as { activated: boolean; recommendations: Array<{ variantSnapshotId: string; latestReorderDate: string }> };
+    assert.equal(ready.status, 200);
+    assert.equal(body.activated, true);
+    assert.equal(body.recommendations.length, 1);
+    assert.equal(body.recommendations[0].variantSnapshotId, variants[0].id);
+    assert.ok(body.recommendations[0].latestReorderDate);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].event_type, "ACTIVATE");
+    assert.equal(events[0].metadata.plan, "FREE");
+    assert.equal(events[0].metadata.event_id, `first_value:shopify:${shop}:v1`);
+    for (const [path, key] of [["/api/products", "products"], ["/api/sales-velocity", "salesVelocity"], ["/api/recommendations", "recommendations"], ["/api/reorder-queue", "queue"]]) {
+      const response = await call(deps, "GET", path);
+      assert.equal(response.status, 200);
+      const rows = (response.body as Record<string, Array<{ id?: string; variantSnapshotId?: string }>>)[key];
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].variantSnapshotId || rows[0].id, variants[0].id);
+    }
+    assert.equal((await call(deps, "POST", "/api/supplier-mappings", { supplierId, variantSnapshotId: variants[1].id })).status, 402);
+    assert.equal((await call(deps, "POST", "/api/suppliers", { name: "Second supplier" })).status, 402);
+    assert.equal((await call(deps, "PUT", `/api/suppliers/${supplierId}`, { leadTimeDays: 1 })).status, 402);
+  });
+
+  it("serializes concurrent free supplier creation so only one succeeds", async () => {
+    const { deps } = await fixture();
+    const responses = await Promise.all(Array.from({ length: 5 }, (_, i) =>
+      call(deps, "POST", "/api/suppliers", { name: `Supplier ${i}` })));
+    assert.deepEqual(responses.map(response => response.status).sort(), [201, 402, 402, 402, 402]);
+    assert.equal((await deps.supplyChain.supplier.findMany({ where: { shop } })).length, 1);
+  });
+
+  it("rejects hidden SKUs and cross-shop suppliers even when called directly", async () => {
+    const { deps, variants } = await fixture();
+    const supplier = await call(deps, "POST", "/api/suppliers", { name: "Allowed supplier" });
+    const supplierId = (supplier.body as { id: string }).id;
+    const attempts = await Promise.all([
+      call(deps, "POST", "/api/supplier-mappings", { supplierId, variantSnapshotId: variants[1].id }),
+      call(deps, "POST", "/api/supplier-mappings", { supplierId: "another-shop-supplier", variantSnapshotId: variants[0].id }),
+    ]);
+    assert.deepEqual(attempts.map(response => response.status), [402, 402]);
+    assert.equal((await deps.supplyChain.supplierMapping.findMany({ where: { shop } })).length, 0);
+  });
+});

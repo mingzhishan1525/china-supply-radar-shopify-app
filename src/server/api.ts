@@ -1,3 +1,4 @@
+import { withShopLifecycle } from "./shopLifecycle.ts";
 import { ShopifyAdminError } from "../shopify/adminClient.ts";
 import { authenticateShopRequest } from "./requestAuth.ts";
 import { ShopifyTokenError } from "./tokenErrors.ts";
@@ -218,12 +219,13 @@ export async function handleApiRequest(
       const products = await listVariantSnapshotsForShop(session.shop, deps.prisma);
       const billing = await resolveBillingStatus(session.shop, deps);
       const entitlements = entitlementsFromBilling(billing);
+      const freeId = entitlements.plan === "FREE" ? await freeVariantId(session.shop, deps) : undefined;
 
       return {
         status: 200,
         body: {
           shop: session.shop,
-          products: entitlements.plan === "PRO" ? products : products.slice(0, FREE_SKU_LIMIT),
+          products: entitlements.plan === "PRO" ? products : products.filter(product => (product.id || product.shopifyVariantId) === freeId).slice(0, FREE_SKU_LIMIT),
           entitlements,
         },
       };
@@ -264,7 +266,7 @@ export async function handleApiRequest(
           shop: session.shop,
           salesVelocity: entitlements.plan === "PRO"
             ? await listSalesVelocityForShop(session.shop, deps.supplyChain)
-            : (await listSalesVelocityForShop(session.shop, deps.supplyChain)).slice(0, FREE_SKU_LIMIT),
+            : await freeVariantRows(session.shop, deps, await listSalesVelocityForShop(session.shop, deps.supplyChain)),
           locked: false,
         },
       };
@@ -274,17 +276,16 @@ export async function handleApiRequest(
       const session = await requireInstalledShop(query, deps);
 
       if (method === "GET") {
-        return { status: 200, body: { shop: session.shop, suppliers: await listSuppliers(session.shop, deps.supplyChain) } };
+        const entitlements = await getEntitlements(session.shop, deps);
+        const suppliers = await listSuppliers(session.shop, deps.supplyChain);
+        return { status: 200, body: { shop: session.shop, suppliers: entitlements.plan === "PRO" ? suppliers : await freeSuppliers(session.shop, deps, suppliers) } };
       }
 
       if (method === "POST") {
-        await requireFreeResourceLimit(
-          session.shop,
-          deps,
-          "supplier",
-          (await listSuppliers(session.shop, deps.supplyChain)).length,
-        );
-        return { status: 201, body: await createSupplier(session.shop, body as Record<string, unknown>, deps.supplyChain) };
+        return await withShopLifecycle(deps.supplyChain, session.shop, async () => {
+          await requireFreeResourceLimit(session.shop, deps, "supplier", (await listSuppliers(session.shop, deps.supplyChain)).length);
+          return { status: 201, body: await createSupplier(session.shop, body as Record<string, unknown>, deps.supplyChain) };
+        });
       }
     }
 
@@ -309,17 +310,27 @@ export async function handleApiRequest(
       const session = await requireInstalledShop(query, deps);
 
       if (method === "GET") {
-        return { status: 200, body: { shop: session.shop, mappings: await listSupplierMappings(session.shop, deps.supplyChain) } };
+        const entitlements = await getEntitlements(session.shop, deps);
+        const mappings = await listSupplierMappings(session.shop, deps.supplyChain);
+        return { status: 200, body: { shop: session.shop, mappings: entitlements.plan === "PRO" ? mappings : await freeVariantRows(session.shop, deps, mappings) } };
       }
 
       if (method === "POST") {
-        await requireFreeResourceLimit(
-          session.shop,
-          deps,
-          "supplier mapping",
-          (await listSupplierMappings(session.shop, deps.supplyChain)).length,
-        );
-        return { status: 201, body: await upsertSupplierMapping(session.shop, body as Record<string, unknown>, deps.supplyChain) };
+        return await withShopLifecycle(deps.supplyChain, session.shop, async () => {
+          const input = body as Record<string, unknown>;
+          const entitlements = await getEntitlements(session.shop, deps);
+          if (entitlements.plan === "FREE") {
+            const variantId = await freeVariantId(session.shop, deps);
+            const suppliers = await freeSuppliers(session.shop, deps, await listSuppliers(session.shop, deps.supplyChain));
+            const mappings = await listSupplierMappings(session.shop, deps.supplyChain);
+            if (input.variantSnapshotId !== variantId || input.supplierId !== suppliers[0]?.id
+                || (mappings.length >= FREE_SKU_LIMIT && !mappings.some(mapping => mapping.variantSnapshotId === input.variantSnapshotId))) {
+              throw new ApiError("pro_required", "Free includes one SKU and one supplier; upgrade to add more", 402);
+            }
+          }
+          // Upserting the same mapping is an idempotent retry, not another SKU.
+          return { status: 201, body: await upsertSupplierMapping(session.shop, input, deps.supplyChain) };
+        });
       }
     }
 
@@ -351,7 +362,7 @@ export async function handleApiRequest(
             shop: session.shop,
             recommendations: entitlements.plan === "PRO"
               ? await listRecommendations(session.shop, deps.supplyChain)
-              : (await listRecommendations(session.shop, deps.supplyChain)).slice(0, FREE_SKU_LIMIT),
+              : await freeVariantRows(session.shop, deps, await listRecommendations(session.shop, deps.supplyChain)),
             locked: false,
           },
         };
@@ -368,7 +379,7 @@ export async function handleApiRequest(
           shop: session.shop,
           queue: entitlements.plan === "PRO"
             ? await listReorderQueue(session.shop, deps.supplyChain)
-            : (await listReorderQueue(session.shop, deps.supplyChain)).slice(0, FREE_SKU_LIMIT),
+            : await freeVariantRows(session.shop, deps, await listReorderQueue(session.shop, deps.supplyChain)),
           locked: false,
         },
       };
@@ -380,7 +391,7 @@ export async function handleApiRequest(
       const result = await generateRecommendationsForShop(session.shop, deps.supplyChain);
       const visibleRecommendations = entitlements.plan === "PRO"
         ? result.recommendations
-        : result.recommendations.slice(0, FREE_SKU_LIMIT);
+        : await freeVariantRows(session.shop, deps, result.recommendations);
       const firstValueRecommendation = visibleRecommendations.find(isFirstValueRecommendation);
 
       if (firstValueRecommendation && deps.config) {
@@ -414,7 +425,7 @@ export async function handleApiRequest(
       return {
         status: 200,
         body: {
-          generatedCount: result.generatedCount,
+          generatedCount: entitlements.plan === "PRO" ? result.generatedCount : visibleRecommendations.length,
           skippedCount: result.skippedCount,
           recommendations: visibleRecommendations,
           activated: Boolean(firstValueRecommendation),
@@ -503,6 +514,29 @@ async function requirePro(shop: string, deps: ApiDeps, feature: string) {
       402,
     );
   }
+}
+
+// Every free endpoint uses the same SKU. Existing mappings pin it after setup;
+// sorting risk lists and taking their first row could expose a different SKU.
+async function freeVariantId(shop: string, deps: ApiDeps): Promise<string | undefined> {
+  const [variants, mappings] = await Promise.all([
+    listVariantSnapshotsForShop(shop, deps.prisma),
+    listSupplierMappings(shop, deps.supplyChain),
+  ]);
+  const mapped = mappings.find(mapping => variants.some(variant => (variant.id || variant.shopifyVariantId) === mapping.variantSnapshotId));
+  return mapped?.variantSnapshotId || (variants[0]?.id || variants[0]?.shopifyVariantId);
+}
+
+async function freeSuppliers<T extends { id?: string }>(shop: string, deps: ApiDeps, suppliers: T[]): Promise<T[]> {
+  const variantId = await freeVariantId(shop, deps);
+  const mapping = (await listSupplierMappings(shop, deps.supplyChain)).find(row => row.variantSnapshotId === variantId);
+  const mapped = suppliers.find(supplier => supplier.id === mapping?.supplierId);
+  return mapped ? [mapped] : suppliers.slice(0, 1);
+}
+
+async function freeVariantRows<T extends { variantSnapshotId: string }>(shop: string, deps: ApiDeps, rows: T[]): Promise<T[]> {
+  const id = await freeVariantId(shop, deps);
+  return rows.filter(row => row.variantSnapshotId === id).slice(0, FREE_SKU_LIMIT);
 }
 
 async function requireFreeResourceLimit(

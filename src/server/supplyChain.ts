@@ -82,6 +82,7 @@ export type GenerateRecommendationsResult = {
 };
 
 export type ReorderQueueItem = {
+  variantSnapshotId: string;
   sku: string | null;
   productTitle: string;
   variantTitle: string;
@@ -353,6 +354,7 @@ export async function listReorderQueue(
       const variant = variantsById.get(item.variantSnapshotId);
 
       return {
+        variantSnapshotId: item.variantSnapshotId,
         sku: variant?.sku || null,
         productTitle: variant?.productTitle || item.variantSnapshotId,
         variantTitle: variant?.title || "",
