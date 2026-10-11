@@ -1,4 +1,5 @@
 import { withShopLifecycle } from "./shopLifecycle.ts";
+import { isGiftCardVariant } from "./supplyChain.ts";
 import { ShopifyAdminError } from "../shopify/adminClient.ts";
 import { authenticateShopRequest } from "./requestAuth.ts";
 import { ShopifyTokenError } from "./tokenErrors.ts";
@@ -524,7 +525,17 @@ async function freeVariantId(shop: string, deps: ApiDeps): Promise<string | unde
     listSupplierMappings(shop, deps.supplyChain),
   ]);
   const mapped = mappings.find(mapping => variants.some(variant => (variant.id || variant.shopifyVariantId) === mapping.variantSnapshotId));
-  return mapped?.variantSnapshotId || (variants[0]?.id || variants[0]?.shopifyVariantId);
+  if (mapped) return mapped.variantSnapshotId;
+  const velocities = await listSalesVelocityForShop(shop, deps.supplyChain);
+  const withSales = new Set(velocities.filter(row => row.estimatedDailySales > 0).map(row => row.variantSnapshotId));
+  const eligible = variants.filter(variant => !isGiftCardVariant(variant));
+  // Before setup, prefer a stocked SKU with observed sales. Mapping pins the
+  // choice so subsequent order syncs cannot silently switch monitored products.
+  const selected = eligible.find(variant => variant.inventoryQuantity > 0 && withSales.has(variant.id || variant.shopifyVariantId))
+    || eligible.find(variant => withSales.has(variant.id || variant.shopifyVariantId))
+    || eligible.find(variant => variant.inventoryQuantity > 0)
+    || eligible[0];
+  return selected?.id || selected?.shopifyVariantId;
 }
 
 async function freeSuppliers<T extends { id?: string }>(shop: string, deps: ApiDeps, suppliers: T[]): Promise<T[]> {

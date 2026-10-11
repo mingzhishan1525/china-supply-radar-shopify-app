@@ -570,7 +570,7 @@ function requireInput(value: string | undefined, name: string): string {
   return value;
 }
 
-function isGiftCardVariant(variant: VariantSnapshot): boolean {
+export function isGiftCardVariant(variant: VariantSnapshot): boolean {
   return `${variant.productTitle} ${variant.title}`.toLowerCase().includes("gift card");
 }
 
